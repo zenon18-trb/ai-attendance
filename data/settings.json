@@ -1,0 +1,10 @@
+{
+  "office_start_time": "00:00",
+  "late_grace_minutes": 200,
+  "cooldown_seconds": 300,
+  "confidence_threshold": 0.55,
+  "sound_effects_enabled": true,
+  "speech_announcement_enabled": true,
+  "organization_name": "Aegis AI Enterprise",
+  "theme_mode": "dark"
+}

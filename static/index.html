@@ -1,0 +1,596 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Face Attendance AI - Smart Recognition System</title>
+  <meta name="description" content="Production-ready real-time AI face recognition attendance system and executive dashboard.">
+  
+  <!-- Favicon / Brand Icon -->
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%2306b6d4'><path d='M12 2a5 5 0 0 1 5 5v2a5 5 0 0 1-10 0V7a5 5 0 0 1 5-5z'/><path d='M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2'/></svg>">
+  
+  <!-- CSS Stylesheet -->
+  <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+
+<div class="app-container">
+  
+  <!-- Sidebar Navigation -->
+  <aside class="sidebar" id="appSidebar">
+    <div class="sidebar-header">
+      <div class="brand-icon">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 2a5 5 0 0 1 5 5v2a5 5 0 0 1-10 0V7a5 5 0 0 1 5-5z"/>
+          <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
+          <circle cx="12" cy="7" r="1"/>
+        </svg>
+      </div>
+      <div>
+        <div class="brand-title">FACE ATTENDANCE</div>
+        <div class="brand-subtitle">
+          <span class="pulse-dot"></span> AI SYSTEM
+        </div>
+      </div>
+    </div>
+
+    <nav class="sidebar-nav">
+      <div class="nav-section-title">Operations</div>
+      
+      <a class="nav-item active" data-view="scanner" id="navScanner">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+        <span>AI Scanner Kiosk</span>
+        <span class="nav-badge" id="badgeLive">LIVE</span>
+      </a>
+
+      <a class="nav-item" data-view="logs" id="navLogs">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+        <span>Attendance Logs</span>
+        <span class="nav-badge" id="badgeLogCount">0</span>
+      </a>
+
+      <a class="nav-item" data-view="roster" id="navRoster">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+        <span>Staff Roster</span>
+        <span class="nav-badge" id="badgePersonCount">0</span>
+      </a>
+
+      <div class="nav-section-title">Intelligence</div>
+
+      <a class="nav-item" data-view="analytics" id="navAnalytics">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+        <span>Analytics Hub</span>
+      </a>
+
+      <a class="nav-item" data-view="settings" id="navSettings">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+        <span>System Settings</span>
+      </a>
+    </nav>
+
+    <div class="sidebar-footer">
+      <div class="system-status-card">
+        <div class="status-info">
+          <span class="status-label">AI Engine Status</span>
+          <span class="status-val" id="engineStatusTxt">ONLINE (v2.0)</span>
+        </div>
+        <span class="pulse-dot"></span>
+      </div>
+    </div>
+  </aside>
+
+  <!-- Main Content Wrapper -->
+  <div class="main-wrapper">
+    
+    <!-- Top Sticky Navbar -->
+    <header class="top-navbar">
+      <div class="header-left">
+        <button class="mobile-menu-btn" id="btnMobileMenu" aria-label="Toggle Menu">☰</button>
+        <h1 class="page-headline" id="pageTitle">AI Scanner Kiosk</h1>
+      </div>
+
+      <div class="header-right">
+        <!-- Live Clock -->
+        <div class="live-clock">
+          <span class="clock-dot"></span>
+          <span id="headerClock">00:00:00</span>
+          <span style="opacity: 0.5;">|</span>
+          <span id="headerDate">08/09/2026</span>
+        </div>
+
+        <!-- Manual Check-In Button -->
+        <button class="btn btn-secondary btn-sm" id="btnOpenManualCheckin">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
+          <span>Manual Check-In</span>
+        </button>
+
+        <!-- Kiosk Fullscreen Trigger -->
+        <button class="icon-btn" id="btnToggleFullscreen" title="Toggle Kiosk Fullscreen">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/></svg>
+        </button>
+
+        <!-- Theme Toggle Switch -->
+        <button class="icon-btn" id="btnToggleTheme" title="Toggle Dark/Light Mode">
+          <svg id="themeIcon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
+        </button>
+      </div>
+    </header>
+
+    <!-- Content Sections -->
+    <main class="content-container">
+
+      <!-- ===================================================================
+           VIEW 1: AI SCANNER KIOSK
+           =================================================================== -->
+      <section class="view-section active-view" id="viewScanner">
+        <div class="scanner-layout">
+          
+          <!-- Viewfinder Camera Card -->
+          <div class="viewport-card">
+            <div class="card-header-hud">
+              <div class="hud-title-group">
+                <span class="card-title">
+                  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--accent-cyan)" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+                  Live AI Facial Scanner
+                </span>
+              </div>
+              <div style="display: flex; gap: 8px; align-items: center;">
+                <span class="hud-badge success" id="cameraStatusBadge">
+                  <span class="pulse-dot"></span> CAMERA ACTIVE
+                </span>
+                <span class="hud-badge" id="fpsBadge">60 FPS</span>
+              </div>
+            </div>
+
+            <!-- Video & Canvas Viewport -->
+            <div class="camera-feed-container" id="cameraViewport">
+              <video id="webcamVideo" autoplay playsinline muted></video>
+              <canvas id="detectionCanvas"></canvas>
+              
+              <!-- Animated Scanning Overlays -->
+              <div class="scan-line" id="scanLaser"></div>
+              <div class="reticle reticle-tl"></div>
+              <div class="reticle reticle-tr"></div>
+              <div class="reticle reticle-bl"></div>
+              <div class="reticle reticle-br"></div>
+
+              <!-- Face Target Reticle Box -->
+              <div class="face-target-box" id="faceTargetBox">
+                <div class="face-target-label" id="faceTargetLabel">SCANNING...</div>
+              </div>
+            </div>
+
+            <!-- Camera Controls Bar -->
+            <div class="camera-controls-bar">
+              <div style="display: flex; gap: 10px; align-items: center;">
+                <label for="cameraSelect" style="font-size: 0.8rem; color: var(--text-muted); font-weight: 600;">DEVICE:</label>
+                <select id="cameraSelect" class="control-select">
+                  <option value="">Default Web Camera</option>
+                </select>
+              </div>
+
+              <div style="display: flex; gap: 10px;">
+                <button class="btn btn-secondary btn-sm" id="btnFlipCamera">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/></svg>
+                  Mirror Feed
+                </button>
+                <button class="btn btn-primary btn-sm" id="btnTestScan">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polygon points="10 8 16 12 10 16 10 8"/></svg>
+                  Scan Face Now
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Real-Time Activity & Status Side Card -->
+          <div class="live-stream-card">
+            
+            <!-- Highlight Box: Last Recognized Face -->
+            <div class="recognition-status-box" id="recognitionBox">
+              <img id="recogAvatar" class="recognition-avatar" src="/api/persons/photo/elonmusk.jpg" alt="Person" onerror="this.src='https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150'">
+              <div class="recognition-details">
+                <div style="display: flex; align-items: center; justify-content: space-between;">
+                  <span style="font-size: 0.72rem; color: var(--accent-cyan); font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em;">IDENTIFIED PERSON</span>
+                  <span class="confidence-tag" id="recogConfidence">99.4% MATCH</span>
+                </div>
+                <div class="recognition-name" id="recogName">Elon Musk</div>
+                <div class="recognition-dept" id="recogRole">Chief Executive Officer • Executive</div>
+                <div class="recognition-meta">
+                  <span class="status-pill ontime" id="recogStatus">On Time</span>
+                  <span style="font-family: var(--font-mono); font-size: 0.75rem; color: var(--text-muted);" id="recogTime">08:42:15 AM</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Mini Live Stream Feed -->
+            <div class="mini-stream-header">
+              <span class="card-title" style="font-size: 1rem;">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--accent-emerald)" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                Today's Check-In Feed
+              </span>
+              <span class="hud-badge success" id="todayPresentBadge">0 Present</span>
+            </div>
+
+            <div class="mini-stream-list" id="miniStreamList">
+              <!-- Rendered dynamically -->
+            </div>
+          </div>
+
+        </div>
+      </section>
+
+      <!-- ===================================================================
+           VIEW 2: ATTENDANCE LOGS
+           =================================================================== -->
+      <section class="view-section" id="viewLogs">
+        
+        <!-- Filter and Search Bar -->
+        <div class="table-filter-bar">
+          <div class="search-group">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+            <input type="text" id="logSearchInput" class="search-input" placeholder="Search by name, employee ID, role...">
+          </div>
+
+          <div class="filter-controls">
+            <input type="date" id="logDateFilter" class="control-select">
+            
+            <select id="logDeptFilter" class="control-select">
+              <option value="All">All Departments</option>
+              <option value="Executive">Executive</option>
+              <option value="Engineering">Engineering</option>
+              <option value="Design">Design</option>
+              <option value="Operations">Operations</option>
+              <option value="Data Science">Data Science</option>
+            </select>
+
+            <select id="logStatusFilter" class="control-select">
+              <option value="All">All Statuses</option>
+              <option value="On Time">On Time</option>
+              <option value="Late">Late</option>
+            </select>
+
+            <button class="btn btn-secondary" id="btnExportCSV" title="Export to CSV">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+              <span>Export CSV</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Attendance Logs Table -->
+        <div class="data-table-container">
+          <table class="custom-table" id="attendanceTable">
+            <thead>
+              <tr>
+                <th>Personnel</th>
+                <th>Department & Role</th>
+                <th>Date</th>
+                <th>Time (24H)</th>
+                <th>Status</th>
+                <th>Confidence</th>
+                <th>Verification</th>
+                <th style="text-align: right;">Action</th>
+              </tr>
+            </thead>
+            <tbody id="attendanceTableBody">
+              <!-- Rendered dynamically -->
+            </tbody>
+          </table>
+
+          <div class="table-pagination">
+            <span style="font-size: 0.85rem; color: var(--text-muted);" id="tableCountSummary">Showing 0 records</span>
+            <div style="display: flex; gap: 8px;">
+              <button class="btn btn-secondary btn-sm" id="btnPrevPage">Previous</button>
+              <button class="btn btn-secondary btn-sm" id="btnNextPage">Next</button>
+            </div>
+          </div>
+        </div>
+
+      </section>
+
+      <!-- ===================================================================
+           VIEW 3: STAFF ROSTER & REGISTRATION
+           =================================================================== -->
+      <section class="view-section" id="viewRoster">
+        
+        <div class="roster-header-bar">
+          <div>
+            <h2 style="font-family: var(--font-display); font-size: 1.4rem; font-weight: 800;">Registered Personnel & Faces</h2>
+            <p style="color: var(--text-muted); font-size: 0.88rem;">Manage enrolled face embeddings, departments, and employee access records.</p>
+          </div>
+
+          <button class="btn btn-primary" id="btnOpenEnrollModal">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+            <span>+ Enroll New Person</span>
+          </button>
+        </div>
+
+        <!-- Roster Grid -->
+        <div class="roster-grid" id="rosterGrid">
+          <!-- Rendered dynamically -->
+        </div>
+
+      </section>
+
+      <!-- ===================================================================
+           VIEW 4: ANALYTICS & INSIGHTS
+           =================================================================== -->
+      <section class="view-section" id="viewAnalytics">
+        
+        <!-- Key Metrics Cards -->
+        <div class="metrics-row">
+          <div class="metric-card">
+            <div class="metric-header">
+              <span class="metric-title">Total Enrolled</span>
+              <div class="metric-icon-wrap">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>
+              </div>
+            </div>
+            <div class="metric-value" id="statTotalEnrolled">0</div>
+            <div class="metric-footer">
+              <span style="color: var(--accent-cyan); font-weight: 700;">Active Roster</span>
+            </div>
+          </div>
+
+          <div class="metric-card green">
+            <div class="metric-header">
+              <span class="metric-title">Present Today</span>
+              <div class="metric-icon-wrap" style="color: var(--accent-emerald);">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
+              </div>
+            </div>
+            <div class="metric-value" id="statPresentToday">0</div>
+            <div class="metric-footer">
+              <span id="statAttendanceRate" style="color: var(--accent-emerald); font-weight: 700;">0%</span>
+              <span>attendance rate</span>
+            </div>
+          </div>
+
+          <div class="metric-card amber">
+            <div class="metric-header">
+              <span class="metric-title">On-Time Arrival</span>
+              <div class="metric-icon-wrap" style="color: var(--accent-amber);">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+              </div>
+            </div>
+            <div class="metric-value" id="statOnTimeRate">100%</div>
+            <div class="metric-footer">
+              <span id="statLateCount" style="color: var(--accent-rose); font-weight: 700;">0 Late</span>
+              <span>arrivals today</span>
+            </div>
+          </div>
+
+          <div class="metric-card rose">
+            <div class="metric-header">
+              <span class="metric-title">Peak Arrival</span>
+              <div class="metric-icon-wrap" style="color: var(--accent-purple);">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+              </div>
+            </div>
+            <div class="metric-value" id="statPeakHour">09:00</div>
+            <div class="metric-footer">
+              <span>Highest check-in traffic</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Charts Grid -->
+        <div class="analytics-charts-grid">
+          
+          <!-- Hourly Distribution Bar Chart -->
+          <div class="chart-card">
+            <div class="mini-stream-header">
+              <span class="card-title">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--accent-cyan)" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="8" y1="12" x2="8" y2="16"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="16" y1="10" x2="16" y2="16"/></svg>
+                Today's Hourly Arrival Traffic
+              </span>
+              <span class="hud-badge">24H TIMELINE</span>
+            </div>
+            <div class="chart-wrapper" id="hourlyChartContainer">
+              <!-- Rendered via SVG -->
+            </div>
+          </div>
+
+          <!-- Department Breakdown Donut / List -->
+          <div class="chart-card">
+            <div class="mini-stream-header">
+              <span class="card-title">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--accent-emerald)" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 2a10 10 0 0 1 10 10"/></svg>
+                Department Distribution
+              </span>
+            </div>
+            <div class="chart-wrapper" id="deptChartContainer">
+              <!-- Rendered via SVG -->
+            </div>
+          </div>
+
+        </div>
+
+      </section>
+
+      <!-- ===================================================================
+           VIEW 5: SYSTEM SETTINGS
+           =================================================================== -->
+      <section class="view-section" id="viewSettings">
+        
+        <div class="settings-container">
+          <div class="settings-card">
+            <h2 style="font-family: var(--font-display); font-size: 1.3rem; font-weight: 800; border-bottom: 1px solid var(--border-subtle); padding-bottom: 12px;">
+              Attendance Rules & AI Configuration
+            </h2>
+
+            <div class="settings-group">
+              <label class="settings-label">Organization / Office Name</label>
+              <p class="settings-desc">Title displayed on kiosk banners and exported attendance reports.</p>
+              <input type="text" id="settingOrgName" class="settings-input" value="Aegis AI Enterprise">
+            </div>
+
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+              <div class="settings-group">
+                <label class="settings-label">Official Start Time (24H)</label>
+                <p class="settings-desc">Arrivals after this time (plus grace period) are marked Late.</p>
+                <input type="time" id="settingStartTime" class="settings-input" value="09:00">
+              </div>
+
+              <div class="settings-group">
+                <label class="settings-label">Late Grace Period (Minutes)</label>
+                <p class="settings-desc">Allowed minutes of leeway before tagging as Late.</p>
+                <input type="number" id="settingGracePeriod" class="settings-input" value="15" min="0" max="60">
+              </div>
+            </div>
+
+            <div class="settings-group">
+              <label class="settings-label">Duplicate Check-In Cooldown (Seconds)</label>
+              <p class="settings-desc">Prevents marking the same face repeatedly within this timeframe (e.g. 300s = 5 mins).</p>
+              <input type="number" id="settingCooldown" class="settings-input" value="300" min="10" max="3600">
+            </div>
+
+            <div class="toggle-switch-group">
+              <div>
+                <div class="settings-label">Audio Chimes & Sound FX</div>
+                <div class="settings-desc">Play futuristic audio feedback when a face is detected and marked.</div>
+              </div>
+              <label class="switch">
+                <input type="checkbox" id="settingAudioSound" checked>
+                <span class="slider"></span>
+              </label>
+            </div>
+
+            <div class="toggle-switch-group">
+              <div>
+                <div class="settings-label">Voice Speech Greeting</div>
+                <div class="settings-desc">Use Web Speech synthesis to voice greeting ("Welcome, [Name]!").</div>
+              </div>
+              <label class="switch">
+                <input type="checkbox" id="settingSpeechVoice" checked>
+                <span class="slider"></span>
+              </label>
+            </div>
+
+            <div style="display: flex; justify-content: flex-end; gap: 12px; margin-top: 10px;">
+              <button class="btn btn-primary" id="btnSaveSettings">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+                <span>Save Configuration</span>
+              </button>
+            </div>
+          </div>
+        </div>
+
+      </section>
+
+    </main>
+  </div>
+</div>
+
+<!-- =======================================================================
+     MODAL: ENROLL NEW PERSON
+     ======================================================================= -->
+<div class="modal-backdrop" id="modalEnroll">
+  <div class="modal-box">
+    <div class="modal-header">
+      <h3 class="modal-title">Enroll New Staff Member</h3>
+      <button class="icon-btn" id="btnCloseEnroll" style="width: 32px; height: 32px;">✕</button>
+    </div>
+
+    <div class="modal-body">
+      <!-- Capture Options: Camera Snapshot or Upload -->
+      <div style="display: flex; gap: 10px;">
+        <button class="btn btn-secondary btn-sm active" id="btnTabSnap" style="flex: 1;">Snap with Camera</button>
+        <button class="btn btn-secondary btn-sm" id="btnTabUpload" style="flex: 1;">Upload Image File</button>
+      </div>
+
+      <!-- Live Snap Area -->
+      <div id="enrollSnapArea" style="display: flex; flex-direction: column; align-items: center; gap: 12px;">
+        <div style="position: relative; width: 220px; height: 220px; border-radius: var(--radius-lg); overflow: hidden; background: #000; border: 2px solid var(--accent-cyan);">
+          <video id="enrollVideo" autoplay playsinline muted style="width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1);"></video>
+          <img id="enrollPhotoPreview" style="display: none; width: 100%; height: 100%; object-fit: cover;" alt="Preview">
+        </div>
+        <button class="btn btn-primary btn-sm" id="btnCaptureEnrollPhoto">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="13" r="4"/><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/></svg>
+          <span id="captureBtnTxt">Capture Photo</span>
+        </button>
+      </div>
+
+      <!-- File Upload Area -->
+      <div id="enrollUploadArea" style="display: none; flex-direction: column; gap: 10px;">
+        <input type="file" id="enrollFileInput" accept="image/*" class="settings-input">
+      </div>
+
+      <!-- Person Form Fields -->
+      <div class="settings-group">
+        <label class="settings-label">Full Name *</label>
+        <input type="text" id="enrollName" class="settings-input" placeholder="e.g. Elon Musk or Sarah Chen" required>
+      </div>
+
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 14px;">
+        <div class="settings-group">
+          <label class="settings-label">Department</label>
+          <select id="enrollDept" class="control-select settings-input">
+            <option value="Engineering">Engineering</option>
+            <option value="Executive">Executive</option>
+            <option value="Design">Design</option>
+            <option value="Operations">Operations</option>
+            <option value="Data Science">Data Science</option>
+            <option value="Sales">Sales</option>
+            <option value="Human Resources">Human Resources</option>
+          </select>
+        </div>
+
+        <div class="settings-group">
+          <label class="settings-label">Role Title</label>
+          <input type="text" id="enrollRole" class="settings-input" placeholder="e.g. Lead Engineer">
+        </div>
+      </div>
+    </div>
+
+    <div class="modal-footer">
+      <button class="btn btn-secondary" id="btnCancelEnroll">Cancel</button>
+      <button class="btn btn-success" id="btnSubmitEnroll">Save & Enroll</button>
+    </div>
+  </div>
+</div>
+
+<!-- =======================================================================
+     MODAL: MANUAL ATTENDANCE CHECK-IN
+     ======================================================================= -->
+<div class="modal-backdrop" id="modalManualCheckin">
+  <div class="modal-box">
+    <div class="modal-header">
+      <h3 class="modal-title">Manual Attendance Check-In</h3>
+      <button class="icon-btn" id="btnCloseManual" style="width: 32px; height: 32px;">✕</button>
+    </div>
+
+    <div class="modal-body">
+      <div class="settings-group">
+        <label class="settings-label">Select Staff Member</label>
+        <select id="manualPersonSelect" class="control-select settings-input">
+          <!-- Dynamic options -->
+        </select>
+      </div>
+
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 14px;">
+        <div class="settings-group">
+          <label class="settings-label">Check-In Time</label>
+          <input type="time" id="manualTime" class="settings-input">
+        </div>
+
+        <div class="settings-group">
+          <label class="settings-label">Date</label>
+          <input type="date" id="manualDate" class="settings-input">
+        </div>
+      </div>
+    </div>
+
+    <div class="modal-footer">
+      <button class="btn btn-secondary" id="btnCancelManual">Cancel</button>
+      <button class="btn btn-primary" id="btnSubmitManual">Record Attendance</button>
+    </div>
+  </div>
+</div>
+
+<!-- Toast Notifications Container -->
+<div class="toast-container" id="toastContainer"></div>
+
+<!-- JavaScript Logic -->
+<script src="/static/js/app.js"></script>
+</body>
+</html>

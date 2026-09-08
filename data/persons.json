@@ -1,0 +1,24 @@
+[
+  {
+    "id": "EMP-0001",
+    "name": "ELON MUSK",
+    "displayName": "Elon Musk",
+    "department": "Executive",
+    "role": "Chief Executive Officer",
+    "email": "elon.musk@company.ai",
+    "image": "/api/persons/photo/elonmusk.jpg",
+    "registeredDate": "2026-01-10",
+    "active": true
+  },
+  {
+    "id": "EMP-0006",
+    "name": "ELENA ROSTOVA",
+    "displayName": "Elena Rostova",
+    "department": "Data Science",
+    "role": "Senior ML Ops Engineer",
+    "email": "elena.rostova@company.ai",
+    "image": "https://images.unsplash.com/photo-1567532939604-b6b5b0db2604?w=400&auto=format&fit=crop&q=80",
+    "registeredDate": "2026-03-01",
+    "active": true
+  }
+]

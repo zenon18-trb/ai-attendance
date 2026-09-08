@@ -1,0 +1,785 @@
+import os
+import io
+import csv
+import json
+import time
+import base64
+import asyncio
+from datetime import datetime, date, timedelta
+from typing import List, Optional, Dict, Any
+
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form, WebSocket, WebSocketDisconnect, Query
+from fastapi.responses import HTMLResponse, JSONResponse, FileResponse, Response
+from fastapi.staticfiles import StaticFiles
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+from PIL import Image
+
+# Initialize FastAPI App
+app = FastAPI(
+    title="AI Face Recognition Attendance System",
+    description="Enterprise-grade AI Face Recognition & Attendance Monitoring Platform",
+    version="2.0.0"
+)
+
+# Enable CORS for production and cross-origin kiosk support
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Base Paths
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+IMAGES_DIR = os.path.join(BASE_DIR, "Images")
+DATA_DIR = os.path.join(BASE_DIR, "data")
+ATTENDANCE_CSV = os.path.join(BASE_DIR, "Attendence.csv")
+ATTENDANCE_JSON = os.path.join(DATA_DIR, "attendance_logs.json")
+PERSONS_JSON = os.path.join(DATA_DIR, "persons.json")
+SETTINGS_JSON = os.path.join(DATA_DIR, "settings.json")
+SNAPSHOTS_DIR = os.path.join(DATA_DIR, "snapshots")
+STATIC_DIR = os.path.join(BASE_DIR, "static")
+
+# Ensure required directories exist
+os.makedirs(IMAGES_DIR, exist_ok=True)
+os.makedirs(DATA_DIR, exist_ok=True)
+os.makedirs(SNAPSHOTS_DIR, exist_ok=True)
+os.makedirs(STATIC_DIR, exist_ok=True)
+
+# Default Settings
+DEFAULT_SETTINGS = {
+    "office_start_time": "09:00",
+    "late_grace_minutes": 15,
+    "cooldown_seconds": 300,  # 5 minutes anti-duplicate check-in cooldown
+    "confidence_threshold": 0.55,
+    "sound_effects_enabled": True,
+    "speech_announcement_enabled": True,
+    "kiosk_mode_pin": "1234",
+    "organization_name": "AI Attendance System",
+    "theme_mode": "dark"
+}
+
+# In-Memory Cache & State
+connected_websockets: List[WebSocket] = []
+known_face_names: List[str] = []
+last_mark_timestamps: Dict[str, float] = {}
+
+# ----------------- Helper Functions ----------------- #
+
+def load_settings() -> Dict[str, Any]:
+    if os.path.exists(SETTINGS_JSON):
+        try:
+            with open(SETTINGS_JSON, "r", encoding="utf-8") as f:
+                saved = json.load(f)
+                return {**DEFAULT_SETTINGS, **saved}
+        except Exception:
+            pass
+    return DEFAULT_SETTINGS.copy()
+
+def save_settings(settings: Dict[str, Any]):
+    with open(SETTINGS_JSON, "w", encoding="utf-8") as f:
+        json.dump(settings, f, indent=2)
+
+def load_persons() -> List[Dict[str, Any]]:
+    persons_map = {}
+    if os.path.exists(PERSONS_JSON):
+        try:
+            with open(PERSONS_JSON, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                for p in data:
+                    persons_map[p["name"].upper()] = p
+        except Exception:
+            pass
+
+    # Synchronize with Images directory
+    if os.path.exists(IMAGES_DIR):
+        for fname in os.listdir(IMAGES_DIR):
+            name, ext = os.path.splitext(fname)
+            if ext.lower() in [".jpg", ".jpeg", ".png", ".webp"]:
+                uname = name.upper()
+                if uname not in persons_map:
+                    persons_map[uname] = {
+                        "id": f"EMP-{len(persons_map) + 1:04d}",
+                        "name": uname,
+                        "displayName": name.replace("_", " ").title(),
+                        "department": "Engineering",
+                        "role": "Team Member",
+                        "email": f"{name.lower().replace(' ', '.')}@company.ai",
+                        "image": f"/api/persons/photo/{fname}",
+                        "registeredDate": datetime.now().strftime("%Y-%m-%d"),
+                        "active": True
+                    }
+    
+    # Save back synchronized list
+    persons_list = list(persons_map.values())
+    with open(PERSONS_JSON, "w", encoding="utf-8") as f:
+        json.dump(persons_list, f, indent=2)
+    
+    return persons_list
+
+def load_attendance_records() -> List[Dict[str, Any]]:
+    records = []
+    
+    # First check JSON store for enriched metadata
+    if os.path.exists(ATTENDANCE_JSON):
+        try:
+            with open(ATTENDANCE_JSON, "r", encoding="utf-8") as f:
+                records = json.load(f)
+        except Exception:
+            records = []
+
+    # Check if Attendence.csv exists and import any records not in JSON
+    if os.path.exists(ATTENDANCE_CSV):
+        try:
+            with open(ATTENDANCE_CSV, "r", encoding="utf-8") as f:
+                reader = csv.reader(f)
+                existing_keys = {f"{r.get('name', '').upper()}_{r.get('date', '')}_{r.get('time', '')}" for r in records}
+                persons = {p["name"].upper(): p for p in load_persons()}
+                
+                for row in reader:
+                    if not row or row[0].startswith("#") or len(row) < 3:
+                        continue
+                    name = row[0].strip().upper()
+                    t_str = row[1].strip()
+                    d_str = row[2].strip()
+                    key = f"{name}_{d_str}_{t_str}"
+                    
+                    if key not in existing_keys:
+                        # Determine status based on time
+                        p_info = persons.get(name, {})
+                        status = "On Time"
+                        try:
+                            t_obj = datetime.strptime(t_str, "%H:%M:%S").time()
+                            settings = load_settings()
+                            start_t = datetime.strptime(settings["office_start_time"], "%H:%M").time()
+                            grace_min = settings["late_grace_minutes"]
+                            late_limit = (datetime.combine(date.today(), start_t) + timedelta(minutes=grace_min)).time()
+                            if t_obj > late_limit:
+                                status = "Late"
+                        except Exception:
+                            status = "Present"
+                            
+                        records.append({
+                            "id": f"ATT-{int(time.time() * 1000)}-{len(records)}",
+                            "name": name,
+                            "displayName": p_info.get("displayName", name.replace("_", " ").title()),
+                            "department": p_info.get("department", "General"),
+                            "role": p_info.get("role", "Member"),
+                            "time": t_str,
+                            "date": d_str,
+                            "status": status,
+                            "confidence": 98.5,
+                            "method": "AI Facial Recognition",
+                            "snapshot": p_info.get("image", ""),
+                            "timestamp": int(time.time() * 1000)
+                        })
+                        existing_keys.add(key)
+        except Exception as e:
+            print(f"Error reading CSV: {e}")
+
+    # Ensure sorted by date and time descending
+    records.sort(key=lambda x: (x.get("date", ""), x.get("time", "")), reverse=True)
+    return records
+
+def save_attendance_records(records: List[Dict[str, Any]]):
+    with open(ATTENDANCE_JSON, "w", encoding="utf-8") as f:
+        json.dump(records, f, indent=2)
+
+def append_to_csv(name: str, t_str: str, d_str: str):
+    # Ensure Attendence.csv exists with header if empty
+    file_exists = os.path.exists(ATTENDANCE_CSV)
+    has_content = file_exists and os.path.getsize(ATTENDANCE_CSV) > 0
+    needs_newline = False
+    if has_content:
+        with open(ATTENDANCE_CSV, "rb") as f:
+            f.seek(-1, os.SEEK_END)
+            last_char = f.read(1)
+            if last_char != b"\n":
+                needs_newline = True
+
+    with open(ATTENDANCE_CSV, "a+", encoding="utf-8") as f:
+        if not has_content:
+            f.write("# Name,Time,Date\n")
+        elif needs_newline:
+            f.write("\n")
+        f.write(f"{name},{t_str},{d_str}\n")
+
+
+# WebSocket Live Broadcast Helper
+async def broadcast_event(event_type: str, data: Any):
+    if not connected_websockets:
+        return
+    message = json.dumps({"type": event_type, "data": data, "timestamp": time.time()})
+    dead_sockets = []
+    for ws in connected_websockets:
+        try:
+            await ws.send_text(message)
+        except Exception:
+            dead_sockets.append(ws)
+    for ws in dead_sockets:
+        if ws in connected_websockets:
+            connected_websockets.remove(ws)
+
+# Models
+class MarkAttendanceRequest(BaseModel):
+    name: str
+    confidence: Optional[float] = 96.0
+    method: Optional[str] = "AI Facial Recognition"
+    snapshot: Optional[str] = None  # Base64 image
+    deviceInfo: Optional[str] = "Front Door AI Kiosk"
+
+class SettingsModel(BaseModel):
+    office_start_time: str
+    late_grace_minutes: int
+    cooldown_seconds: int
+    confidence_threshold: float
+    sound_effects_enabled: bool
+    speech_announcement_enabled: bool
+    organization_name: str
+    theme_mode: Optional[str] = "dark"
+
+class PersonCreateRequest(BaseModel):
+    name: str
+    displayName: Optional[str] = None
+    department: Optional[str] = "Engineering"
+    role: Optional[str] = "Team Member"
+    email: Optional[str] = None
+    imageBase64: Optional[str] = None
+
+class FrameRecognizeRequest(BaseModel):
+    frameBase64: str
+
+# Load OpenCV Cascade if available
+CASCADE_PATH = os.path.join(DATA_DIR, "haarcascade_frontalface_default.xml")
+face_cascade = None
+try:
+    import cv2
+    import numpy as np
+    if os.path.exists(CASCADE_PATH):
+        face_cascade = cv2.CascadeClassifier(CASCADE_PATH)
+except Exception as e:
+    print(f"OpenCV cascade load error: {e}")
+
+# ----------------- REST API Endpoints ----------------- #
+
+@app.get("/api/status")
+async def get_system_status():
+    persons = load_persons()
+    records = load_attendance_records()
+    today_str = datetime.now().strftime("%d/%m/%Y")
+    today_records = [r for r in records if r.get("date") == today_str]
+    unique_present_today = len({r["name"].upper() for r in today_records})
+    
+    return {
+        "status": "online",
+        "systemTime": datetime.now().isoformat(),
+        "totalRegistered": len(persons),
+        "presentToday": unique_present_today,
+        "totalLogsToday": len(today_records),
+        "version": "2.0.0"
+    }
+
+@app.get("/api/attendance")
+async def get_attendance(
+    search: Optional[str] = None,
+    date_filter: Optional[str] = None,
+    department: Optional[str] = None,
+    status: Optional[str] = None,
+    limit: int = 100,
+    offset: int = 0
+):
+    records = load_attendance_records()
+    filtered = records
+
+    if search:
+        s = search.lower()
+        filtered = [r for r in filtered if s in r.get("name", "").lower() or s in r.get("displayName", "").lower()]
+
+    if date_filter:
+        filtered = [r for r in filtered if r.get("date") == date_filter]
+
+    if department and department != "All":
+        filtered = [r for r in filtered if r.get("department", "").lower() == department.lower()]
+
+    if status and status != "All":
+        filtered = [r for r in filtered if r.get("status", "").lower() == status.lower()]
+
+    total = len(filtered)
+    paged = filtered[offset: offset + limit]
+
+    return {
+        "total": total,
+        "records": paged,
+        "limit": limit,
+        "offset": offset
+    }
+
+@app.post("/api/attendance/mark")
+async def mark_attendance(req: MarkAttendanceRequest):
+    settings = load_settings()
+    name_upper = req.name.strip().upper()
+    now = datetime.now()
+    t_str = now.strftime("%H:%M:%S")
+    d_str = now.strftime("%d/%m/%Y")
+    now_ts = time.time()
+
+    # Check anti-duplicate cooldown
+    cooldown = settings.get("cooldown_seconds", 300)
+    last_time = last_mark_timestamps.get(name_upper, 0)
+    time_since = now_ts - last_time
+
+    if time_since < cooldown:
+        remaining = int(cooldown - time_since)
+        return JSONResponse(
+            status_code=200,
+            content={
+                "success": False,
+                "alreadyMarked": True,
+                "name": name_upper,
+                "message": f"Attendance for {name_upper} already marked recently. Please wait {remaining}s.",
+                "remainingCooldown": remaining
+            }
+        )
+
+    # Save snapshot if provided
+    snapshot_url = ""
+    if req.snapshot and req.snapshot.startswith("data:image"):
+        try:
+            header, encoded = req.snapshot.split(",", 1)
+            img_data = base64.b64decode(encoded)
+            snap_filename = f"snap_{name_upper}_{int(now_ts)}.jpg"
+            snap_path = os.path.join(SNAPSHOTS_DIR, snap_filename)
+            with open(snap_path, "wb") as f:
+                f.write(img_data)
+            snapshot_url = f"/api/snapshots/{snap_filename}"
+        except Exception as e:
+            print(f"Snapshot save error: {e}")
+
+    # Look up person info
+    persons = {p["name"].upper(): p for p in load_persons()}
+    p_info = persons.get(name_upper, {})
+    if not snapshot_url:
+        snapshot_url = p_info.get("image", "")
+
+    # Calculate On-Time vs Late
+    status = "On Time"
+    try:
+        start_t = datetime.strptime(settings["office_start_time"], "%H:%M").time()
+        grace_min = settings["late_grace_minutes"]
+        late_limit = (datetime.combine(date.today(), start_t) + timedelta(minutes=grace_min)).time()
+        if now.time() > late_limit:
+            status = "Late"
+    except Exception:
+        status = "Present"
+
+    new_record = {
+        "id": f"ATT-{int(now_ts * 1000)}",
+        "name": name_upper,
+        "displayName": p_info.get("displayName", name_upper.replace("_", " ").title()),
+        "department": p_info.get("department", "General"),
+        "role": p_info.get("role", "Team Member"),
+        "time": t_str,
+        "date": d_str,
+        "status": status,
+        "confidence": round(req.confidence or 98.0, 1),
+        "method": req.method or "AI Facial Recognition",
+        "snapshot": snapshot_url,
+        "deviceInfo": req.deviceInfo,
+        "timestamp": int(now_ts * 1000)
+    }
+
+    # Save to JSON & Append to CSV
+    records = load_attendance_records()
+    records.insert(0, new_record)
+    save_attendance_records(records)
+    append_to_csv(name_upper, t_str, d_str)
+
+    # Update cooldown memory
+    last_mark_timestamps[name_upper] = now_ts
+
+    # Broadcast event via WebSockets
+    await broadcast_event("NEW_ATTENDANCE", new_record)
+
+    return {
+        "success": True,
+        "alreadyMarked": False,
+        "record": new_record,
+        "message": f"Welcome {new_record['displayName']}! Attendance marked as {status} at {t_str}."
+    }
+
+@app.post("/api/recognize_frame")
+async def recognize_camera_frame(req: FrameRecognizeRequest):
+    if not req.frameBase64 or not req.frameBase64.startswith("data:image"):
+        raise HTTPException(status_code=400, detail="Invalid frame")
+    
+    try:
+        header, encoded = req.frameBase64.split(",", 1)
+        frame_bytes = base64.b64decode(encoded)
+        
+        # Decode image using OpenCV
+        nparr = np.frombuffer(frame_bytes, np.uint8)
+        img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+        if img is None:
+            return {"matched": False, "message": "Failed to decode frame"}
+        
+        orb = cv2.ORB_create(nfeatures=600)
+        bf = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)
+        
+        # Compute keypoints & descriptors of incoming frame
+        kp_frame, des_frame = orb.detectAndCompute(img, None)
+        img_flipped = cv2.flip(img, 1)
+        kp_flipped, des_flipped = orb.detectAndCompute(img_flipped, None)
+
+        if (des_frame is None or len(des_frame) < 5) and (des_flipped is None or len(des_flipped) < 5):
+            return {"matched": False, "message": "No clear facial features detected"}
+
+        # Histogram of incoming frame
+        h_small = cv2.resize(img, (120, 120))
+        hist_frame = cv2.calcHist([h_small], [0, 1, 2], None, [8, 8, 8], [0, 256, 0, 256, 0, 256])
+        cv2.normalize(hist_frame, hist_frame, 0, 1, cv2.NORM_MINMAX)
+
+        best_name = None
+        best_composite_score = 0.0
+        best_matches_count = 0
+
+        for fname in os.listdir(IMAGES_DIR):
+            if not fname.lower().endswith(('.jpg', '.jpeg', '.png', '.webp')):
+                continue
+            fpath = os.path.join(IMAGES_DIR, fname)
+            ref_img = cv2.imread(fpath)
+            if ref_img is None:
+                continue
+
+            kp_ref, des_ref = orb.detectAndCompute(ref_img, None)
+            if des_ref is None:
+                continue
+
+            # Match against original & flipped
+            matches_orig = bf.match(des_ref, des_frame) if des_frame is not None else []
+            good_orig = [m for m in matches_orig if m.distance < 60]
+
+            matches_flip = bf.match(des_ref, des_flipped) if des_flipped is not None else []
+            good_flip = [m for m in matches_flip if m.distance < 60]
+
+            good_count = max(len(good_orig), len(good_flip))
+
+            # Color similarity
+            ref_small = cv2.resize(ref_img, (120, 120))
+            hist_ref = cv2.calcHist([ref_small], [0, 1, 2], None, [8, 8, 8], [0, 256, 0, 256, 0, 256])
+            cv2.normalize(hist_ref, hist_ref, 0, 1, cv2.NORM_MINMAX)
+            hist_sim = max(0.0, cv2.compareHist(hist_frame, hist_ref, cv2.HISTCMP_CORREL))
+
+            match_ratio = good_count / max(len(des_ref), 1)
+            composite = (match_ratio * 0.65) + (hist_sim * 0.35)
+
+            if composite > best_composite_score and (good_count >= 12 or (good_count >= 8 and hist_sim > 0.4)):
+                best_composite_score = composite
+                best_matches_count = good_count
+                best_name = os.path.splitext(fname)[0].upper()
+
+        if best_name:
+            confidence = round(min(99.4, max(82.0, 75.0 + (best_composite_score * 30.0))), 1)
+            
+            # Auto mark attendance
+            mark_res = await mark_attendance(MarkAttendanceRequest(
+                name=best_name,
+                confidence=confidence,
+                method="AI Facial Recognition",
+                snapshot=req.frameBase64
+            ))
+            
+            # If it's a JSONResponse (like alreadyMarked), extract dict
+            if isinstance(mark_res, JSONResponse):
+                res_dict = json.loads(mark_res.body.decode())
+                return {
+                    "matched": True,
+                    "name": best_name,
+                    "confidence": confidence,
+                    "alreadyMarked": True,
+                    "message": res_dict.get("message")
+                }
+            
+            return {
+                "matched": True,
+                "name": best_name,
+                "confidence": confidence,
+                "record": mark_res.get("record"),
+                "message": mark_res.get("message")
+            }
+        
+        return {"matched": False, "message": "Face not recognized in staff directory"}
+    except Exception as e:
+        print(f"Recognition error: {e}")
+        return {"matched": False, "error": str(e)}
+
+
+@app.delete("/api/attendance/{record_id}")
+async def delete_attendance_record(record_id: str):
+    records = load_attendance_records()
+    initial_len = len(records)
+    records = [r for r in records if r.get("id") != record_id]
+    if len(records) == initial_len:
+        raise HTTPException(status_code=404, detail="Record not found")
+    save_attendance_records(records)
+    await broadcast_event("ATTENDANCE_DELETED", {"id": record_id})
+    return {"success": True, "message": "Record deleted"}
+
+@app.get("/api/attendance/export")
+async def export_attendance(format: str = Query("csv")):
+    records = load_attendance_records()
+    if format.lower() == "json":
+        return JSONResponse(content=records, headers={"Content-Disposition": "attachment; filename=attendance_export.json"})
+    
+    # Generate CSV
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["ID", "Name", "Display Name", "Department", "Role", "Date", "Time", "Status", "Confidence (%)", "Method"])
+    for r in records:
+        writer.writerow([
+            r.get("id", ""),
+            r.get("name", ""),
+            r.get("displayName", ""),
+            r.get("department", ""),
+            r.get("role", ""),
+            r.get("date", ""),
+            r.get("time", ""),
+            r.get("status", ""),
+            r.get("confidence", ""),
+            r.get("method", "")
+        ])
+    output.seek(0)
+    return Response(
+        content=output.getvalue(),
+        media_type="text/csv",
+        headers={"Content-Disposition": f"attachment; filename=attendance_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"}
+    )
+
+# ----------------- Persons / Face Roster API ----------------- #
+
+@app.get("/api/persons")
+async def get_persons():
+    persons = load_persons()
+    records = load_attendance_records()
+    
+    # Enrich with attendance stats
+    for p in persons:
+        uname = p["name"].upper()
+        p_records = [r for r in records if r.get("name", "").upper() == uname]
+        p["totalAttendance"] = len(p_records)
+        p["lastSeen"] = p_records[0]["date"] + " " + p_records[0]["time"] if p_records else "Never"
+    
+    return persons
+
+@app.post("/api/persons")
+async def create_person(req: PersonCreateRequest):
+    uname = req.name.strip().upper()
+    if not uname:
+        raise HTTPException(status_code=400, detail="Person name is required")
+    
+    persons = load_persons()
+    for p in persons:
+        if p["name"].upper() == uname:
+            raise HTTPException(status_code=400, detail=f"Person '{uname}' is already registered.")
+
+    # Save image
+    img_filename = f"{uname.lower().replace(' ', '_')}.jpg"
+    img_path = os.path.join(IMAGES_DIR, img_filename)
+    
+    if req.imageBase64 and req.imageBase64.startswith("data:image"):
+        try:
+            header, encoded = req.imageBase64.split(",", 1)
+            img_data = base64.b64decode(encoded)
+            with open(img_path, "wb") as f:
+                f.write(img_data)
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Failed to decode image: {e}")
+    else:
+        # Create a simple placeholder avatar image if not provided
+        img = Image.new("RGB", (300, 300), color=(30, 41, 59))
+        img.save(img_path)
+
+    new_person = {
+        "id": f"EMP-{len(persons) + 1:04d}",
+        "name": uname,
+        "displayName": req.displayName or uname.replace("_", " ").title(),
+        "department": req.department or "Engineering",
+        "role": req.role or "Team Member",
+        "email": req.email or f"{uname.lower().replace(' ', '.')}@company.ai",
+        "image": f"/api/persons/photo/{img_filename}",
+        "registeredDate": datetime.now().strftime("%Y-%m-%d"),
+        "active": True
+    }
+
+    persons.append(new_person)
+    with open(PERSONS_JSON, "w", encoding="utf-8") as f:
+        json.dump(persons, f, indent=2)
+
+    await broadcast_event("PERSON_REGISTERED", new_person)
+    return {"success": True, "person": new_person, "message": f"Successfully enrolled {new_person['displayName']}."}
+
+@app.delete("/api/persons/{name}")
+async def delete_person(name: str):
+    uname = name.strip().upper()
+    persons = load_persons()
+    initial_len = len(persons)
+    persons = [p for p in persons if p["name"].upper() != uname]
+    
+    if len(persons) == initial_len:
+        raise HTTPException(status_code=404, detail=f"Person '{uname}' not found")
+    
+    with open(PERSONS_JSON, "w", encoding="utf-8") as f:
+        json.dump(persons, f, indent=2)
+
+    # Attempt to remove image file
+    for fname in os.listdir(IMAGES_DIR):
+        if os.path.splitext(fname)[0].upper() == uname:
+            try:
+                os.remove(os.path.join(IMAGES_DIR, fname))
+            except Exception:
+                pass
+
+    await broadcast_event("PERSON_DELETED", {"name": uname})
+    return {"success": True, "message": f"Person '{uname}' deleted."}
+
+@app.get("/api/persons/photo/{filename}")
+async def get_person_photo(filename: str):
+    path = os.path.join(IMAGES_DIR, filename)
+    if not os.path.exists(path):
+        raise HTTPException(status_code=404, detail="Photo not found")
+    return FileResponse(path)
+
+@app.get("/api/snapshots/{filename}")
+async def get_snapshot_photo(filename: str):
+    path = os.path.join(SNAPSHOTS_DIR, filename)
+    if not os.path.exists(path):
+        raise HTTPException(status_code=404, detail="Snapshot not found")
+    return FileResponse(path)
+
+# ----------------- Analytics & Intelligence API ----------------- #
+
+@app.get("/api/analytics")
+async def get_analytics():
+    persons = load_persons()
+    records = load_attendance_records()
+    total_persons = len(persons)
+    
+    today_str = datetime.now().strftime("%d/%m/%Y")
+    today_records = [r for r in records if r.get("date") == today_str]
+    
+    unique_present_names = {r["name"].upper() for r in today_records}
+    present_count = len(unique_present_names)
+    absent_count = max(0, total_persons - present_count)
+    
+    on_time_count = sum(1 for r in today_records if r.get("status") == "On Time")
+    late_count = sum(1 for r in today_records if r.get("status") == "Late")
+    
+    attendance_rate = round((present_count / total_persons * 100), 1) if total_persons > 0 else 0
+    on_time_rate = round((on_time_count / present_count * 100), 1) if present_count > 0 else 100
+
+    # Hourly check-in distribution (from 06:00 to 20:00)
+    hourly_distribution = {f"{h:02d}:00": 0 for h in range(6, 21)}
+    for r in today_records:
+        try:
+            t = datetime.strptime(r.get("time", ""), "%H:%M:%S")
+            hour_key = f"{t.hour:02d}:00"
+            if hour_key in hourly_distribution:
+                hourly_distribution[hour_key] += 1
+        except Exception:
+            pass
+
+    # Past 7 Days Trend
+    trend_7days = []
+    for i in range(6, -1, -1):
+        target_date = datetime.now() - timedelta(days=i)
+        d_str = target_date.strftime("%d/%m/%Y")
+        label = target_date.strftime("%a %d")
+        d_records = [r for r in records if r.get("date") == d_str]
+        present_d = len({r["name"].upper() for r in d_records})
+        late_d = sum(1 for r in d_records if r.get("status") == "Late")
+        trend_7days.append({
+            "date": d_str,
+            "label": label,
+            "present": present_d,
+            "late": late_d,
+            "total": total_persons
+        })
+
+    # Department Breakdown
+    dept_map = {}
+    for p in persons:
+        dept = p.get("department", "Other")
+        dept_map[dept] = dept_map.get(dept, 0) + 1
+        
+    dept_breakdown = [{"department": d, "count": c} for d, c in dept_map.items()]
+
+    return {
+        "summary": {
+            "totalRegistered": total_persons,
+            "presentToday": present_count,
+            "absentToday": absent_count,
+            "onTimeToday": on_time_count,
+            "lateToday": late_count,
+            "attendanceRate": attendance_rate,
+            "onTimeRate": on_time_rate,
+            "peakHour": max(hourly_distribution.items(), key=lambda x: x[1])[0] if any(hourly_distribution.values()) else "09:00"
+        },
+        "hourly": [{"hour": h, "count": c} for h, c in hourly_distribution.items()],
+        "trend7Days": trend_7days,
+        "departmentBreakdown": dept_breakdown,
+        "recentLogs": records[:10]
+    }
+
+# ----------------- Settings API ----------------- #
+
+@app.get("/api/settings")
+async def get_settings():
+    return load_settings()
+
+@app.post("/api/settings")
+async def update_settings(settings: SettingsModel):
+    data = settings.model_dump()
+    save_settings(data)
+    await broadcast_event("SETTINGS_UPDATED", data)
+    return {"success": True, "settings": data, "message": "Settings updated successfully."}
+
+# ----------------- WebSocket Live Feed ----------------- #
+
+@app.websocket("/ws/live")
+async def websocket_live_feed(websocket: WebSocket):
+    await websocket.accept()
+    connected_websockets.append(websocket)
+    try:
+        # Send initial handshake state
+        await websocket.send_text(json.dumps({
+            "type": "INIT_STATE",
+            "data": {
+                "serverTime": datetime.now().isoformat(),
+                "connectedClients": len(connected_websockets)
+            }
+        }))
+        while True:
+            # Keep alive and receive client pings/messages
+            data = await websocket.receive_text()
+    except WebSocketDisconnect:
+        if websocket in connected_websockets:
+            connected_websockets.remove(websocket)
+    except Exception:
+        if websocket in connected_websockets:
+            connected_websockets.remove(websocket)
+
+# Serve Frontend Static Assets and Main Index
+app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
+@app.get("/", response_class=HTMLResponse)
+async def serve_index():
+    index_file = os.path.join(STATIC_DIR, "index.html")
+    if os.path.exists(index_file):
+        with open(index_file, "r", encoding="utf-8") as f:
+            return HTMLResponse(f.read())
+    return HTMLResponse("<h1>AI Attendance System - Static files initializing...</h1>")
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run("app:app", host="0.0.0.0", port=8000, reload=True)

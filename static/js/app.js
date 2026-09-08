@@ -406,10 +406,41 @@ function speakGreeting(personName) {
 }
 
 /* ==========================================================================
-   WEBSOCKET REAL-TIME DATA STREAM
+   WEBSOCKET REAL-TIME DATA STREAM WITH POLLING FALLBACK
    ========================================================================== */
 
+let wsRetryCount = 0;
+let pollingInterval = null;
+
+function startPollingFallback() {
+  if (pollingInterval) return;
+  const badge = document.getElementById('engineStatusTxt');
+  if (badge) badge.textContent = 'ONLINE (Cloud Sync)';
+  
+  // Poll every 10 seconds for live updates
+  pollingInterval = setInterval(async () => {
+    try {
+      if (AppState.currentView === 'logs' || AppState.currentView === 'scanner') {
+        await loadAttendanceLogs();
+      }
+      if (AppState.currentView === 'analytics') {
+        await loadAnalytics();
+      }
+    } catch (e) {
+      console.warn('Polling sync notice:', e);
+    }
+  }, 10000);
+}
+
 function initWebSocket() {
+  // If running on Vercel or cloud serverless, prioritize reliable HTTP polling
+  if (window.location.hostname.includes('vercel.app')) {
+    const badge = document.getElementById('engineStatusTxt');
+    if (badge) badge.textContent = 'ONLINE (Cloud Sync)';
+    startPollingFallback();
+    return;
+  }
+
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
   const wsUrl = `${protocol}//${window.location.host}/ws/live`;
 
@@ -417,9 +448,14 @@ function initWebSocket() {
     AppState.webSocket = new WebSocket(wsUrl);
 
     AppState.webSocket.onopen = () => {
+      wsRetryCount = 0;
       console.log('Live WebSocket connection established.');
       const badge = document.getElementById('engineStatusTxt');
       if (badge) badge.textContent = 'ONLINE (Live Sync)';
+      if (pollingInterval) {
+        clearInterval(pollingInterval);
+        pollingInterval = null;
+      }
     };
 
     AppState.webSocket.onmessage = (event) => {
@@ -431,12 +467,20 @@ function initWebSocket() {
       }
     };
 
+    AppState.webSocket.onerror = () => {
+      startPollingFallback();
+    };
+
     AppState.webSocket.onclose = () => {
-      console.warn('WebSocket disconnected. Retrying in 5 seconds...');
-      setTimeout(initWebSocket, 5000);
+      wsRetryCount++;
+      startPollingFallback();
+      if (wsRetryCount < 3) {
+        setTimeout(initWebSocket, 5000);
+      }
     };
   } catch (e) {
-    console.error('WebSocket connection failed:', e);
+    console.warn('WebSocket unavailable, running on polling fallback:', e);
+    startPollingFallback();
   }
 }
 

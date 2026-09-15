@@ -120,7 +120,12 @@ async function initAuth() {
       const { error } = await supabaseClient.auth.signInWithPassword({ email, password });
       submit.disabled = false;
       if (error) {
-        message.textContent = 'We could not sign you in. Check your email and password.';
+        const authMessages = {
+          invalid_credentials: 'That email or password is incorrect.',
+          email_not_confirmed: 'Please confirm your email address before signing in.',
+          user_not_found: 'No account exists for that email yet. Create an account first.'
+        };
+        message.textContent = authMessages[error.code] || error.message || 'We could not sign you in. Please try again.';
         submit.textContent = 'Sign in';
         return;
       }

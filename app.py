@@ -14,7 +14,7 @@ from fastapi import FastAPI, HTTPException, UploadFile, File, Form, WebSocket, W
 from fastapi.responses import HTMLResponse, JSONResponse, FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, ConfigDict
 from PIL import Image
 import jwt
 from jwt import PyJWKClient
@@ -50,7 +50,15 @@ async def require_authenticated_request(request: Request, call_next):
             request.state.user = verify_access_token(authorization[7:].strip())
         except HTTPException as exc:
             return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
-    return await call_next(request)
+    content_length = request.headers.get("content-length")
+    if content_length and int(content_length) > 12 * 1024 * 1024:
+        return JSONResponse(status_code=413, content={"detail": "Request payload is too large"})
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["X-Frame-Options"] = "SAMEORIGIN"
+    response.headers["Permissions-Policy"] = "camera=(self), microphone=(), geolocation=()"
+    return response
 
 # Initialize FastAPI App
 app = FastAPI(
@@ -424,32 +432,36 @@ async def broadcast_event(event_type: str, data: Any):
 
 # Models
 class MarkAttendanceRequest(BaseModel):
-    name: str
-    confidence: Optional[float] = 96.0
-    method: Optional[str] = "AI Facial Recognition"
-    snapshot: Optional[str] = None  # Base64 image
-    deviceInfo: Optional[str] = "Front Door AI Kiosk"
+    model_config = ConfigDict(extra="forbid")
+    name: str = Field(min_length=1, max_length=120)
+    confidence: Optional[float] = Field(default=96.0, ge=0, le=100)
+    method: Optional[str] = Field(default="AI Facial Recognition", max_length=80)
+    snapshot: Optional[str] = Field(default=None, max_length=8_000_000)
+    deviceInfo: Optional[str] = Field(default="Front Door AI Kiosk", max_length=160)
 
 class SettingsModel(BaseModel):
-    office_start_time: str
-    late_grace_minutes: int
-    cooldown_seconds: int
-    confidence_threshold: float
+    model_config = ConfigDict(extra="forbid")
+    office_start_time: str = Field(min_length=5, max_length=5)
+    late_grace_minutes: int = Field(ge=0, le=240)
+    cooldown_seconds: int = Field(ge=0, le=86400)
+    confidence_threshold: float = Field(ge=0, le=1)
     sound_effects_enabled: bool
     speech_announcement_enabled: bool
-    organization_name: str
-    theme_mode: Optional[str] = "dark"
+    organization_name: str = Field(min_length=1, max_length=120)
+    theme_mode: Optional[str] = Field(default="dark", max_length=20)
 
 class PersonCreateRequest(BaseModel):
-    name: str
-    displayName: Optional[str] = None
-    department: Optional[str] = "Engineering"
-    role: Optional[str] = "Team Member"
-    email: Optional[str] = None
-    imageBase64: Optional[str] = None
+    model_config = ConfigDict(extra="forbid")
+    name: str = Field(min_length=1, max_length=120)
+    displayName: Optional[str] = Field(default=None, max_length=120)
+    department: Optional[str] = Field(default="Engineering", max_length=120)
+    role: Optional[str] = Field(default="Team Member", max_length=120)
+    email: Optional[str] = Field(default=None, max_length=254)
+    imageBase64: Optional[str] = Field(default=None, max_length=8_000_000)
 
 class FrameRecognizeRequest(BaseModel):
-    frameBase64: str
+    model_config = ConfigDict(extra="forbid")
+    frameBase64: str = Field(min_length=20, max_length=8_000_000)
 
 # ----------------- AI Vision & Recognition Engines ----------------- #
 CASCADE_PATH = os.path.join(DATA_DIR, "haarcascade_frontalface_default.xml")

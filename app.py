@@ -18,6 +18,7 @@ from pydantic import BaseModel, Field, ConfigDict
 from PIL import Image
 import jwt
 from jwt import PyJWKClient
+from supabase_repo import ensure_organization, SupabaseRepositoryError
 
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "").rstrip("/")
 SUPABASE_JWT_SECRET = os.environ.get("SUPABASE_JWT_SECRET", "")
@@ -48,6 +49,13 @@ async def require_authenticated_request(request: Request, call_next):
             return JSONResponse(status_code=401, content={"detail": "Authentication required"})
         try:
             request.state.user = verify_access_token(authorization[7:].strip())
+            user_id = request.state.user.get("sub")
+            if not user_id:
+                return JSONResponse(status_code=401, content={"detail": "Invalid authentication token"})
+            try:
+                request.state.organization_id = ensure_organization(user_id)
+            except SupabaseRepositoryError:
+                return JSONResponse(status_code=503, content={"detail": "Organization service unavailable"})
         except HTTPException as exc:
             return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
     content_length = request.headers.get("content-length")

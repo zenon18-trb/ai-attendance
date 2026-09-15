@@ -567,12 +567,14 @@ async def health_check():
     }
 
 @app.get("/api/status")
-async def get_system_status():
-    persons = load_persons()
-    records = load_attendance_records()
-    today_str = datetime.now().strftime("%d/%m/%Y")
-    today_records = [r for r in records if r.get("date") == today_str]
-    unique_present_today = len({r["name"].upper() for r in today_records})
+async def get_system_status(request: Request):
+    people_rows = supabase_list_people(request.state.organization_id)
+    attendance_rows = supabase_list_attendance(request.state.organization_id, limit=500, offset=0)
+    persons = people_rows
+    records = attendance_rows
+    today_str = datetime.now().date().isoformat()
+    today_records = [r for r in records if r.get("captured_at", "").startswith(today_str)]
+    unique_present_today = len({r["person_name"].upper() for r in today_records})
     
     return {
         "status": "online",
@@ -893,18 +895,18 @@ async def delete_attendance_record(record_id: str, request: Request):
     await broadcast_event("ATTENDANCE_DELETED", {"id": record_id})
     return {"success": True, "message": "Record deleted"}
 
-    records = load_attendance_records()
-    initial_len = len(records)
-    records = [r for r in records if r.get("id") != record_id]
-    if len(records) == initial_len:
-        raise HTTPException(status_code=404, detail="Record not found")
-    save_attendance_records(records)
-    await broadcast_event("ATTENDANCE_DELETED", {"id": record_id})
-    return {"success": True, "message": "Record deleted"}
-
 @app.get("/api/attendance/export")
-async def export_attendance(format: str = Query("csv")):
-    records = load_attendance_records()
+async def export_attendance(request: Request, format: str = Query("csv")):
+    try:
+        rows = supabase_list_attendance(request.state.organization_id, limit=500, offset=0)
+        records = [{
+            "id": row["id"], "name": row["person_name"], "displayName": row["person_name"],
+            "date": row.get("captured_at", "")[:10], "time": row.get("captured_at", "")[11:19],
+            "status": row.get("status", "Present"), "confidence": float(row["confidence"] or 0) * 100 if row.get("confidence") is not None else 0,
+            "method": "AI Facial Recognition",
+        } for row in rows]
+    except SupabaseRepositoryError as exc:
+        raise HTTPException(status_code=503, detail="Attendance service unavailable") from exc
     if format.lower() == "json":
         return JSONResponse(content=records, headers={"Content-Disposition": "attachment; filename=attendance_export.json"})
     

@@ -10,12 +10,64 @@ import asyncio
 from datetime import datetime, date, timedelta
 from typing import List, Optional, Dict, Any
 
-from fastapi import FastAPI, HTTPException, UploadFile, File, Form, WebSocket, WebSocketDisconnect, Query
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form, WebSocket, WebSocketDisconnect, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse, FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, ConfigDict
 from PIL import Image
+import jwt
+from jwt import PyJWKClient
+from supabase_repo import ensure_organization, list_people as supabase_list_people, create_person as supabase_create_person, delete_person as supabase_delete_person, list_attendance as supabase_list_attendance, create_attendance as supabase_create_attendance, delete_attendance as supabase_delete_attendance, upload_face_image, create_signed_image_url, SupabaseRepositoryError
+
+SUPABASE_URL = os.environ.get("SUPABASE_URL", "").rstrip("/")
+LOCAL_DEMO_MODE = os.environ.get("LOCAL_DEMO_MODE", "false").lower() == "true"
+SUPABASE_JWT_SECRET = os.environ.get("SUPABASE_JWT_SECRET", "")
+SUPABASE_JWKS_URL = f"{SUPABASE_URL}/auth/v1/.well-known/jwks.json" if SUPABASE_URL else ""
+_jwks_client = PyJWKClient(SUPABASE_JWKS_URL) if SUPABASE_JWKS_URL else None
+
+PUBLIC_API_PATHS = {"/api/supabase-config", "/health"}
+
+def verify_access_token(token: str) -> dict:
+    if not token:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    try:
+        header = jwt.get_unverified_header(token)
+        algorithm = header.get("alg")
+        if algorithm == "HS256" and SUPABASE_JWT_SECRET:
+            return jwt.decode(token, SUPABASE_JWT_SECRET, algorithms=["HS256"], audience="authenticated")
+        if algorithm in {"RS256", "ES256"} and _jwks_client:
+            signing_key = _jwks_client.get_signing_key_from_jwt(token)
+            return jwt.decode(token, signing_key.key, algorithms=[algorithm], audience="authenticated")
+    except Exception as exc:
+        raise HTTPException(status_code=401, detail="Invalid authentication token") from exc
+    raise HTTPException(status_code=401, detail="Authentication is not configured")
+
+async def require_authenticated_request(request: Request, call_next):
+    if request.url.path.startswith("/api/") and request.url.path not in PUBLIC_API_PATHS:
+        authorization = request.headers.get("authorization", "")
+        if not authorization.startswith("Bearer "):
+            return JSONResponse(status_code=401, content={"detail": "Authentication required"})
+        try:
+            request.state.user = verify_access_token(authorization[7:].strip())
+            user_id = request.state.user.get("sub")
+            if not user_id:
+                return JSONResponse(status_code=401, content={"detail": "Invalid authentication token"})
+            try:
+                request.state.organization_id = ensure_organization(user_id)
+            except SupabaseRepositoryError:
+                return JSONResponse(status_code=503, content={"detail": "Organization service unavailable"})
+        except HTTPException as exc:
+            return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+    content_length = request.headers.get("content-length")
+    if content_length and int(content_length) > 12 * 1024 * 1024:
+        return JSONResponse(status_code=413, content={"detail": "Request payload is too large"})
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["X-Frame-Options"] = "SAMEORIGIN"
+    response.headers["Permissions-Policy"] = "camera=(self), microphone=(), geolocation=()"
+    return response
 
 # Initialize FastAPI App
 app = FastAPI(
@@ -24,14 +76,16 @@ app = FastAPI(
     version="2.0.0"
 )
 
-# Enable CORS for production and cross-origin kiosk support
+# Restrict cross-origin access; same-origin deployment remains the default.
+allowed_origins = [origin.strip() for origin in os.environ.get("ALLOWED_ORIGINS", "").split(",") if origin.strip()]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=allowed_origins,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type"],
 )
+app.middleware("http")(require_authenticated_request)
 
 # Base Paths (Source Repo)
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -185,6 +239,8 @@ def save_settings(settings: Dict[str, Any]):
 
 def load_persons() -> List[Dict[str, Any]]:
     global _in_memory_persons
+    if not LOCAL_DEMO_MODE:
+        return list(_in_memory_persons)
     persons_map = {}
     
     # 1. From file if exists
@@ -258,6 +314,8 @@ def save_persons_list(persons: List[Dict[str, Any]]):
 
 def load_attendance_records() -> List[Dict[str, Any]]:
     global _in_memory_records
+    if not LOCAL_DEMO_MODE:
+        return list(_in_memory_records)
     records = []
     
     # 1. From file
@@ -387,32 +445,36 @@ async def broadcast_event(event_type: str, data: Any):
 
 # Models
 class MarkAttendanceRequest(BaseModel):
-    name: str
-    confidence: Optional[float] = 96.0
-    method: Optional[str] = "AI Facial Recognition"
-    snapshot: Optional[str] = None  # Base64 image
-    deviceInfo: Optional[str] = "Front Door AI Kiosk"
+    model_config = ConfigDict(extra="forbid")
+    name: str = Field(min_length=1, max_length=120)
+    confidence: Optional[float] = Field(default=96.0, ge=0, le=100)
+    method: Optional[str] = Field(default="AI Facial Recognition", max_length=80)
+    snapshot: Optional[str] = Field(default=None, max_length=8_000_000)
+    deviceInfo: Optional[str] = Field(default="Front Door AI Kiosk", max_length=160)
 
 class SettingsModel(BaseModel):
-    office_start_time: str
-    late_grace_minutes: int
-    cooldown_seconds: int
-    confidence_threshold: float
+    model_config = ConfigDict(extra="forbid")
+    office_start_time: str = Field(min_length=5, max_length=5)
+    late_grace_minutes: int = Field(ge=0, le=240)
+    cooldown_seconds: int = Field(ge=0, le=86400)
+    confidence_threshold: float = Field(ge=0, le=1)
     sound_effects_enabled: bool
     speech_announcement_enabled: bool
-    organization_name: str
-    theme_mode: Optional[str] = "dark"
+    organization_name: str = Field(min_length=1, max_length=120)
+    theme_mode: Optional[str] = Field(default="dark", max_length=20)
 
 class PersonCreateRequest(BaseModel):
-    name: str
-    displayName: Optional[str] = None
-    department: Optional[str] = "Engineering"
-    role: Optional[str] = "Team Member"
-    email: Optional[str] = None
-    imageBase64: Optional[str] = None
+    model_config = ConfigDict(extra="forbid")
+    name: str = Field(min_length=1, max_length=120)
+    displayName: Optional[str] = Field(default=None, max_length=120)
+    department: Optional[str] = Field(default="Engineering", max_length=120)
+    role: Optional[str] = Field(default="Team Member", max_length=120)
+    email: Optional[str] = Field(default=None, max_length=254)
+    imageBase64: Optional[str] = Field(default=None, max_length=8_000_000)
 
 class FrameRecognizeRequest(BaseModel):
-    frameBase64: str
+    model_config = ConfigDict(extra="forbid")
+    frameBase64: str = Field(min_length=20, max_length=8_000_000)
 
 # ----------------- AI Vision & Recognition Engines ----------------- #
 CASCADE_PATH = os.path.join(DATA_DIR, "haarcascade_frontalface_default.xml")
@@ -510,12 +572,14 @@ async def health_check():
     }
 
 @app.get("/api/status")
-async def get_system_status():
-    persons = load_persons()
-    records = load_attendance_records()
-    today_str = datetime.now().strftime("%d/%m/%Y")
-    today_records = [r for r in records if r.get("date") == today_str]
-    unique_present_today = len({r["name"].upper() for r in today_records})
+async def get_system_status(request: Request):
+    people_rows = supabase_list_people(request.state.organization_id)
+    attendance_rows = supabase_list_attendance(request.state.organization_id, limit=500, offset=0)
+    persons = people_rows
+    records = attendance_rows
+    today_str = datetime.now().date().isoformat()
+    today_records = [r for r in records if r.get("captured_at", "").startswith(today_str)]
+    unique_present_today = len({r["person_name"].upper() for r in today_records})
     
     return {
         "status": "online",
@@ -528,14 +592,24 @@ async def get_system_status():
 
 @app.get("/api/attendance")
 async def get_attendance(
+    request: Request,
     search: Optional[str] = None,
     date_filter: Optional[str] = None,
     department: Optional[str] = None,
     status: Optional[str] = None,
-    limit: int = 100,
-    offset: int = 0
+    limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0)
 ):
-    records = load_attendance_records()
+    try:
+        rows = supabase_list_attendance(request.state.organization_id, limit=500, offset=0)
+        records = [{
+            "id": row["id"], "name": row["person_name"], "displayName": row["person_name"],
+            "date": row.get("captured_at", "")[:10], "time": row.get("captured_at", "")[11:19],
+            "status": row.get("status", "Present"), "confidence": float(row["confidence"] or 0) * 100 if row.get("confidence") is not None else 0,
+            "snapshot": create_signed_image_url(row.get("snapshot_path", "")), "method": "AI Facial Recognition",
+        } for row in rows]
+    except SupabaseRepositoryError as exc:
+        raise HTTPException(status_code=503, detail="Attendance service unavailable") from exc
     filtered = records
 
     if search:
@@ -562,7 +636,7 @@ async def get_attendance(
     }
 
 @app.post("/api/attendance/mark")
-async def mark_attendance(req: MarkAttendanceRequest):
+async def mark_attendance(req: MarkAttendanceRequest, request: Request):
     settings = load_settings()
     name_upper = req.name.strip().upper()
     now = datetime.now()
@@ -635,10 +709,20 @@ async def mark_attendance(req: MarkAttendanceRequest):
         "timestamp": int(now_ts * 1000)
     }
 
-    # Save to JSON & Append to CSV
-    records = load_attendance_records()
-    records.insert(0, new_record)
-    save_attendance_records(records)
+    try:
+        stored = supabase_create_attendance(request.state.organization_id, {
+            "person_name": name_upper,
+            "status": "Present" if status == "On Time" else status,
+            "confidence": min(max((req.confidence or 98.0) / 100, 0), 1),
+            "captured_at": now.isoformat(),
+            "snapshot_path": None,
+        })
+        new_record["id"] = stored["id"]
+        new_record["timestamp"] = stored.get("captured_at", now.isoformat())
+    except SupabaseRepositoryError as exc:
+        raise HTTPException(status_code=503, detail="Attendance service unavailable") from exc
+
+    # Keep the local CSV as an offline export only; Supabase is the source of truth.
     append_to_csv(name_upper, t_str, d_str)
 
     # Update cooldown memory
@@ -655,7 +739,7 @@ async def mark_attendance(req: MarkAttendanceRequest):
     }
 
 @app.post("/api/recognize_frame")
-async def recognize_camera_frame(req: FrameRecognizeRequest):
+async def recognize_camera_frame(req: FrameRecognizeRequest, request: Request):
     if not req.frameBase64 or not req.frameBase64.startswith("data:image"):
         raise HTTPException(status_code=400, detail="Invalid frame")
     
@@ -781,7 +865,7 @@ async def recognize_camera_frame(req: FrameRecognizeRequest):
                 confidence=confidence,
                 method=method_used,
                 snapshot=req.frameBase64
-            ))
+            ), request)
             
             if isinstance(mark_res, JSONResponse):
                 res_dict = json.loads(mark_res.body.decode())
@@ -808,19 +892,26 @@ async def recognize_camera_frame(req: FrameRecognizeRequest):
 
 
 @app.delete("/api/attendance/{record_id}")
-async def delete_attendance_record(record_id: str):
-    records = load_attendance_records()
-    initial_len = len(records)
-    records = [r for r in records if r.get("id") != record_id]
-    if len(records) == initial_len:
-        raise HTTPException(status_code=404, detail="Record not found")
-    save_attendance_records(records)
+async def delete_attendance_record(record_id: str, request: Request):
+    try:
+        supabase_delete_attendance(request.state.organization_id, record_id)
+    except SupabaseRepositoryError as exc:
+        raise HTTPException(status_code=503, detail="Attendance service unavailable") from exc
     await broadcast_event("ATTENDANCE_DELETED", {"id": record_id})
     return {"success": True, "message": "Record deleted"}
 
 @app.get("/api/attendance/export")
-async def export_attendance(format: str = Query("csv")):
-    records = load_attendance_records()
+async def export_attendance(request: Request, format: str = Query("csv")):
+    try:
+        rows = supabase_list_attendance(request.state.organization_id, limit=500, offset=0)
+        records = [{
+            "id": row["id"], "name": row["person_name"], "displayName": row["person_name"],
+            "date": row.get("captured_at", "")[:10], "time": row.get("captured_at", "")[11:19],
+            "status": row.get("status", "Present"), "confidence": float(row["confidence"] or 0) * 100 if row.get("confidence") is not None else 0,
+            "method": "AI Facial Recognition",
+        } for row in rows]
+    except SupabaseRepositoryError as exc:
+        raise HTTPException(status_code=503, detail="Attendance service unavailable") from exc
     if format.lower() == "json":
         return JSONResponse(content=records, headers={"Content-Disposition": "attachment; filename=attendance_export.json"})
     
@@ -851,29 +942,41 @@ async def export_attendance(format: str = Query("csv")):
 # ----------------- Persons / Face Roster API ----------------- #
 
 @app.get("/api/persons")
-async def get_persons():
-    persons = load_persons()
-    records = load_attendance_records()
+async def get_persons(request: Request):
+    try:
+        people_rows = supabase_list_people(request.state.organization_id)
+        persons = [{
+            "id": p["id"], "name": p["name"], "displayName": p["name"],
+            "employeeId": p["employee_id"], "image": create_signed_image_url(p.get("image_path", "")),
+            "registeredDate": p.get("created_at", "")[:10], "active": True,
+        } for p in people_rows]
+    except SupabaseRepositoryError as exc:
+        raise HTTPException(status_code=503, detail="People service unavailable") from exc
+    records = supabase_list_attendance(request.state.organization_id, limit=500, offset=0)
     
-    # Enrich with attendance stats
+    # Enrich with attendance stats from the same organization.
     for p in persons:
         uname = p["name"].upper()
-        p_records = [r for r in records if r.get("name", "").upper() == uname]
+        p_records = [r for r in records if r.get("person_name", "").upper() == uname]
         p["totalAttendance"] = len(p_records)
-        p["lastSeen"] = p_records[0]["date"] + " " + p_records[0]["time"] if p_records else "Never"
+        p["lastSeen"] = p_records[0].get("captured_at", "") if p_records else "Never"
     
     return persons
 
 @app.post("/api/persons")
-async def create_person(req: PersonCreateRequest):
+async def create_person(req: PersonCreateRequest, request: Request):
     uname = req.name.strip().upper()
     if not uname:
         raise HTTPException(status_code=400, detail="Person name is required")
     
-    persons = load_persons()
-    for p in persons:
+    try:
+        existing_people = supabase_list_people(request.state.organization_id)
+    except SupabaseRepositoryError as exc:
+        raise HTTPException(status_code=503, detail="People service unavailable") from exc
+    for p in existing_people:
         if p["name"].upper() == uname:
             raise HTTPException(status_code=400, detail=f"Person '{uname}' is already registered.")
+    persons = existing_people
 
     # Save image
     img_filename = f"{uname.lower().replace(' ', '_')}.jpg"
@@ -906,8 +1009,20 @@ async def create_person(req: PersonCreateRequest):
         "active": True
     }
 
-    persons.append(new_person)
-    save_persons_list(persons)
+    try:
+        image_path = ""
+        if req.imageBase64 and req.imageBase64.startswith("data:image"):
+            _, encoded = req.imageBase64.split(",", 1)
+            image_path = upload_face_image(request.state.organization_id, img_filename, base64.b64decode(encoded))
+        stored_person = supabase_create_person(request.state.organization_id, {
+            "name": uname,
+            "employee_id": new_person["id"],
+            "image_path": image_path or None,
+        })
+        new_person["id"] = stored_person["id"]
+        new_person["image"] = create_signed_image_url(image_path)
+    except SupabaseRepositoryError as exc:
+        raise HTTPException(status_code=503, detail="Supabase enrollment service unavailable") from exc
 
     # Immediately compute and register face embedding in memory
     if HAS_FACE_RECOGNITION and os.path.exists(img_path):
@@ -919,16 +1034,21 @@ async def create_person(req: PersonCreateRequest):
     return {"success": True, "person": new_person, "message": f"Successfully enrolled {new_person['displayName']}."}
 
 @app.delete("/api/persons/{name}")
-async def delete_person(name: str):
+async def delete_person(name: str, request: Request):
     uname = name.strip().upper()
-    persons = load_persons()
-    initial_len = len(persons)
-    persons = [p for p in persons if p["name"].upper() != uname]
-    
-    if len(persons) == initial_len:
+    try:
+        people_rows = supabase_list_people(request.state.organization_id)
+    except SupabaseRepositoryError as exc:
+        raise HTTPException(status_code=503, detail="People service unavailable") from exc
+    deleted_person = next((p for p in people_rows if p["name"].upper() == uname), None)
+    if not deleted_person:
         raise HTTPException(status_code=404, detail=f"Person '{uname}' not found")
     
-    save_persons_list(persons)
+    try:
+        if deleted_person and deleted_person.get("id"):
+            supabase_delete_person(request.state.organization_id, deleted_person["id"])
+    except SupabaseRepositoryError as exc:
+        raise HTTPException(status_code=503, detail="Supabase deletion service unavailable") from exc
 
     # Evict from facial embedding cache
     known_face_encodings_cache.pop(uname, None)
@@ -967,12 +1087,21 @@ async def get_snapshot_photo(filename: str):
 # ----------------- Analytics & Intelligence API ----------------- #
 
 @app.get("/api/analytics")
-async def get_analytics():
-    persons = load_persons()
-    records = load_attendance_records()
+async def get_analytics(request: Request):
+    try:
+        persons = supabase_list_people(request.state.organization_id)
+        attendance_rows = supabase_list_attendance(request.state.organization_id, limit=500, offset=0)
+    except SupabaseRepositoryError as exc:
+        raise HTTPException(status_code=503, detail="Analytics service unavailable") from exc
+    records = [{
+        "name": row["person_name"],
+        "date": row.get("captured_at", "")[:10],
+        "time": row.get("captured_at", "")[11:19],
+        "status": row.get("status", "Present"),
+    } for row in attendance_rows]
     total_persons = len(persons)
     
-    today_str = datetime.now().strftime("%d/%m/%Y")
+    today_str = datetime.now().date().isoformat()
     today_records = [r for r in records if r.get("date") == today_str]
     
     unique_present_names = {r["name"].upper() for r in today_records}
@@ -1000,7 +1129,7 @@ async def get_analytics():
     trend_7days = []
     for i in range(6, -1, -1):
         target_date = datetime.now() - timedelta(days=i)
-        d_str = target_date.strftime("%d/%m/%Y")
+        d_str = target_date.date().isoformat()
         label = target_date.strftime("%a %d")
         d_records = [r for r in records if r.get("date") == d_str]
         present_d = len({r["name"].upper() for r in d_records})

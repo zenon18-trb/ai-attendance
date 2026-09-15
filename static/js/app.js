@@ -33,6 +33,23 @@ const AppState = {
 };
 
 let supabaseClient = null;
+let authenticatedFetchInstalled = false;
+
+function installAuthenticatedFetch() {
+  if (authenticatedFetchInstalled) return;
+  const originalFetch = window.fetch.bind(window);
+  window.fetch = async (input, init = {}) => {
+    const url = typeof input === 'string' ? input : input.url;
+    if (!url.startsWith('/api/') || url === '/api/supabase-config') {
+      return originalFetch(input, init);
+    }
+    const { data: { session } } = await supabaseClient.auth.getSession();
+    const headers = new Headers(init.headers || {});
+    if (session?.access_token) headers.set('Authorization', `Bearer ${session.access_token}`);
+    return originalFetch(input, { ...init, headers });
+  };
+  authenticatedFetchInstalled = true;
+}
 
 async function initAuth() {
   const gate = document.getElementById('authGate');
@@ -75,6 +92,7 @@ async function initAuth() {
     supabaseClient = window.supabase.createClient(config.url, config.publishableKey);
     const { data: { session } } = await supabaseClient.auth.getSession();
     if (session) {
+      installAuthenticatedFetch();
       gate.hidden = true;
       shell.hidden = false;
       supabaseClient.auth.onAuthStateChange((_event, nextSession) => {

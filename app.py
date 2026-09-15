@@ -10,12 +10,47 @@ import asyncio
 from datetime import datetime, date, timedelta
 from typing import List, Optional, Dict, Any
 
-from fastapi import FastAPI, HTTPException, UploadFile, File, Form, WebSocket, WebSocketDisconnect, Query
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form, WebSocket, WebSocketDisconnect, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse, FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from PIL import Image
+import jwt
+from jwt import PyJWKClient
+
+SUPABASE_URL = os.environ.get("SUPABASE_URL", "").rstrip("/")
+SUPABASE_JWT_SECRET = os.environ.get("SUPABASE_JWT_SECRET", "")
+SUPABASE_JWKS_URL = f"{SUPABASE_URL}/auth/v1/.well-known/jwks.json" if SUPABASE_URL else ""
+_jwks_client = PyJWKClient(SUPABASE_JWKS_URL) if SUPABASE_JWKS_URL else None
+
+PUBLIC_API_PATHS = {"/api/supabase-config", "/health"}
+
+def verify_access_token(token: str) -> dict:
+    if not token:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    try:
+        header = jwt.get_unverified_header(token)
+        algorithm = header.get("alg")
+        if algorithm == "HS256" and SUPABASE_JWT_SECRET:
+            return jwt.decode(token, SUPABASE_JWT_SECRET, algorithms=["HS256"], audience="authenticated")
+        if algorithm in {"RS256", "ES256"} and _jwks_client:
+            signing_key = _jwks_client.get_signing_key_from_jwt(token)
+            return jwt.decode(token, signing_key.key, algorithms=[algorithm], audience="authenticated")
+    except Exception as exc:
+        raise HTTPException(status_code=401, detail="Invalid authentication token") from exc
+    raise HTTPException(status_code=401, detail="Authentication is not configured")
+
+async def require_authenticated_request(request: Request, call_next):
+    if request.url.path.startswith("/api/") and request.url.path not in PUBLIC_API_PATHS:
+        authorization = request.headers.get("authorization", "")
+        if not authorization.startswith("Bearer "):
+            return JSONResponse(status_code=401, content={"detail": "Authentication required"})
+        try:
+            request.state.user = verify_access_token(authorization[7:].strip())
+        except HTTPException as exc:
+            return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+    return await call_next(request)
 
 # Initialize FastAPI App
 app = FastAPI(
@@ -24,14 +59,16 @@ app = FastAPI(
     version="2.0.0"
 )
 
-# Enable CORS for production and cross-origin kiosk support
+# Restrict cross-origin access; same-origin deployment remains the default.
+allowed_origins = [origin.strip() for origin in os.environ.get("ALLOWED_ORIGINS", "").split(",") if origin.strip()]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=allowed_origins,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type"],
 )
+app.middleware("http")(require_authenticated_request)
 
 # Base Paths (Source Repo)
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))

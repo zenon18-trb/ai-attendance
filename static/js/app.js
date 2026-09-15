@@ -97,20 +97,40 @@ async function initAuth() {
         }
         submit.disabled = true;
         submit.textContent = 'Creating account…';
-        const { data, error } = await supabaseClient.auth.signUp({ email, password });
-        submit.disabled = false;
-        if (error) {
-          message.textContent = error.message.includes('already registered')
-            ? 'That email is already registered. Sign in instead.'
-            : 'We could not create your account. Please check your details and try again.';
-          return;
-        }
-        if (data.session) {
-          window.location.reload();
-        } else {
-          message.textContent = 'Account created. Check your email to confirm your address, then sign in.';
-          isSignUp = false;
-          updateAuthMode();
+        message.textContent = '';
+
+        try {
+          const signupRequest = supabaseClient.auth.signUp({ email, password });
+          const timeout = new Promise((_, reject) => {
+            window.setTimeout(() => reject(new Error('The authentication service took too long to respond. Please try again.')), 15000);
+          });
+          const { data, error } = await Promise.race([signupRequest, timeout]);
+
+          if (error) {
+            const errorText = (error.message || '').toLowerCase();
+            message.textContent = errorText.includes('already registered') || error.code === 'user_already_exists'
+              ? 'That email is already registered. Sign in instead.'
+              : errorText.includes('rate limit')
+                ? 'Too many attempts. Please wait a few minutes and try again.'
+                : errorText.includes('password')
+                  ? error.message
+                  : error.message || 'We could not create your account. Please try again.';
+            return;
+          }
+
+          if (data.session) {
+            window.location.reload();
+          } else {
+            message.textContent = 'Account created. Check your email to confirm your address, then sign in.';
+            isSignUp = false;
+            updateAuthMode();
+          }
+        } catch (error) {
+          console.error('[v0] Sign-up request failed:', error);
+          message.textContent = error.message || 'Sign-up is unavailable right now. Please try again.';
+        } finally {
+          submit.disabled = false;
+          submit.textContent = 'Create account';
         }
         return;
       }

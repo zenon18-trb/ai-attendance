@@ -11,10 +11,28 @@
   
   <!-- CSS Stylesheet -->
   <link rel="stylesheet" href="/static/css/style.css">
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 </head>
 <body>
 
-<div class="app-container">
+<div class="auth-gate" id="authGate" aria-labelledby="authTitle">
+  <div class="auth-card">
+    <div class="auth-mark" aria-hidden="true">✓</div>
+    <p class="auth-eyebrow">AI ATTENDANCE</p>
+    <h1 id="authTitle">Sign in to continue</h1>
+    <p class="auth-copy">Use your organization account to manage attendance securely.</p>
+    <form id="authForm" class="auth-form">
+      <label for="authEmail">Email address</label>
+      <input id="authEmail" type="email" autocomplete="email" required placeholder="you@company.com">
+      <label for="authPassword">Password</label>
+      <input id="authPassword" type="password" autocomplete="current-password" required minlength="6" placeholder="Enter your password">
+      <button class="btn btn-primary" type="submit" id="authSubmit">Sign in</button>
+      <p class="auth-message" id="authMessage" role="status"></p>
+    </form>
+  </div>
+</div>
+
+<div class="app-container" id="appShell">
   
   <!-- Sidebar Navigation -->
   <aside class="sidebar" id="appSidebar">

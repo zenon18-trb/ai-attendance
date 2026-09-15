@@ -32,8 +32,54 @@ const AppState = {
   isMirrored: true
 };
 
+let supabaseClient = null;
+
+async function initAuth() {
+  const gate = document.getElementById('authGate');
+  const shell = document.getElementById('appShell');
+  const form = document.getElementById('authForm');
+  const message = document.getElementById('authMessage');
+  try {
+    const config = await fetch('/api/supabase-config').then((response) => response.json());
+    if (!config.url || !config.publishableKey || !window.supabase) {
+      message.textContent = 'Sign-in is not configured for this environment.';
+      return false;
+    }
+    supabaseClient = window.supabase.createClient(config.url, config.publishableKey);
+    const { data: { session } } = await supabaseClient.auth.getSession();
+    if (session) {
+      gate.hidden = true;
+      shell.hidden = false;
+      supabaseClient.auth.onAuthStateChange((_event, nextSession) => {
+        if (!nextSession) window.location.reload();
+      });
+      return true;
+    }
+    gate.hidden = false;
+    shell.hidden = true;
+    form.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      message.textContent = 'Signing in…';
+      const { error } = await supabaseClient.auth.signInWithPassword({
+        email: document.getElementById('authEmail').value.trim(),
+        password: document.getElementById('authPassword').value
+      });
+      if (error) {
+        message.textContent = 'We could not sign you in. Check your email and password.';
+        return;
+      }
+      window.location.reload();
+    });
+    return false;
+  } catch (error) {
+    message.textContent = 'Sign-in is temporarily unavailable. Please try again.';
+    return false;
+  }
+}
+
 // Initialize Application on DOM Content Loaded
 document.addEventListener('DOMContentLoaded', async () => {
+  if (!await initAuth()) return;
   initTheme();
   initClock();
   initNavigation();

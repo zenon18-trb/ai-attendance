@@ -53,6 +53,41 @@ def create_person(organization_id: str, person: Dict[str, Any]) -> Dict[str, Any
     return _request("people", "POST", {"organization_id": organization_id, **person})[0]
 
 
+def upload_face_image(organization_id: str, filename: str, image_bytes: bytes, content_type: str = "image/jpeg") -> str:
+    if not SUPABASE_URL or not SUPABASE_SERVICE_KEY:
+        raise SupabaseRepositoryError("Supabase server credentials are not configured")
+    safe_name = filename.replace("/", "_").replace("\\", "_")
+    path = f"{organization_id}/{safe_name}"
+    request = Request(
+        f"{SUPABASE_URL}/storage/v1/object/face-images/{path}",
+        data=image_bytes,
+        headers={"apikey": SUPABASE_SERVICE_KEY, "Authorization": f"Bearer {SUPABASE_SERVICE_KEY}", "Content-Type": content_type, "x-upsert": "true"},
+        method="POST",
+    )
+    try:
+        with urlopen(request, timeout=20):
+            return path
+    except HTTPError as error:
+        raise SupabaseRepositoryError("Face image upload failed") from error
+
+
+def create_signed_image_url(path: str, expires_in: int = 3600) -> str:
+    if not path or not SUPABASE_URL or not SUPABASE_SERVICE_KEY:
+        return ""
+    request = Request(
+        f"{SUPABASE_URL}/storage/v1/object/sign/face-images/{path}",
+        data=__import__("json").dumps({"expiresIn": expires_in}).encode(),
+        headers={"apikey": SUPABASE_SERVICE_KEY, "Authorization": f"Bearer {SUPABASE_SERVICE_KEY}", "Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urlopen(request, timeout=15) as response:
+            result = __import__("json").loads(response.read())
+            return f"{SUPABASE_URL}/storage/v1{result.get('signedURL', '')}"
+    except HTTPError as error:
+        raise SupabaseRepositoryError("Face image URL generation failed") from error
+
+
 def create_attendance(organization_id: str, record: Dict[str, Any]) -> Dict[str, Any]:
     return _request("attendance_logs", "POST", {"organization_id": organization_id, **record})[0]
 

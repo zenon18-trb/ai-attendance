@@ -18,7 +18,7 @@ from pydantic import BaseModel, Field, ConfigDict
 from PIL import Image
 import jwt
 from jwt import PyJWKClient
-from supabase_repo import ensure_organization, SupabaseRepositoryError
+from supabase_repo import ensure_organization, list_people as supabase_list_people, create_person as supabase_create_person, delete_person as supabase_delete_person, upload_face_image, create_signed_image_url, SupabaseRepositoryError
 
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "").rstrip("/")
 SUPABASE_JWT_SECRET = os.environ.get("SUPABASE_JWT_SECRET", "")
@@ -908,8 +908,16 @@ async def export_attendance(format: str = Query("csv")):
 # ----------------- Persons / Face Roster API ----------------- #
 
 @app.get("/api/persons")
-async def get_persons():
-    persons = load_persons()
+async def get_persons(request: Request):
+    try:
+        people_rows = supabase_list_people(request.state.organization_id)
+        persons = [{
+            "id": p["id"], "name": p["name"], "displayName": p["name"],
+            "employeeId": p["employee_id"], "image": create_signed_image_url(p.get("image_path", "")),
+            "registeredDate": p.get("created_at", "")[:10], "active": True,
+        } for p in people_rows]
+    except SupabaseRepositoryError:
+        persons = load_persons()
     records = load_attendance_records()
     
     # Enrich with attendance stats
@@ -922,7 +930,7 @@ async def get_persons():
     return persons
 
 @app.post("/api/persons")
-async def create_person(req: PersonCreateRequest):
+async def create_person(req: PersonCreateRequest, request: Request):
     uname = req.name.strip().upper()
     if not uname:
         raise HTTPException(status_code=400, detail="Person name is required")
@@ -963,8 +971,20 @@ async def create_person(req: PersonCreateRequest):
         "active": True
     }
 
-    persons.append(new_person)
-    save_persons_list(persons)
+    try:
+        image_path = ""
+        if req.imageBase64 and req.imageBase64.startswith("data:image"):
+            _, encoded = req.imageBase64.split(",", 1)
+            image_path = upload_face_image(request.state.organization_id, img_filename, base64.b64decode(encoded))
+        stored_person = supabase_create_person(request.state.organization_id, {
+            "name": uname,
+            "employee_id": new_person["id"],
+            "image_path": image_path or None,
+        })
+        new_person["id"] = stored_person["id"]
+        new_person["image"] = create_signed_image_url(image_path)
+    except SupabaseRepositoryError as exc:
+        raise HTTPException(status_code=503, detail="Supabase enrollment service unavailable") from exc
 
     # Immediately compute and register face embedding in memory
     if HAS_FACE_RECOGNITION and os.path.exists(img_path):
@@ -976,16 +996,21 @@ async def create_person(req: PersonCreateRequest):
     return {"success": True, "person": new_person, "message": f"Successfully enrolled {new_person['displayName']}."}
 
 @app.delete("/api/persons/{name}")
-async def delete_person(name: str):
+async def delete_person(name: str, request: Request):
     uname = name.strip().upper()
     persons = load_persons()
+    deleted_person = next((p for p in persons if p["name"].upper() == uname), None)
     initial_len = len(persons)
     persons = [p for p in persons if p["name"].upper() != uname]
     
     if len(persons) == initial_len:
         raise HTTPException(status_code=404, detail=f"Person '{uname}' not found")
     
-    save_persons_list(persons)
+    try:
+        if deleted_person and deleted_person.get("id"):
+            supabase_delete_person(request.state.organization_id, deleted_person["id"])
+    except SupabaseRepositoryError as exc:
+        raise HTTPException(status_code=503, detail="Supabase deletion service unavailable") from exc
 
     # Evict from facial embedding cache
     known_face_encodings_cache.pop(uname, None)

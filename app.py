@@ -21,6 +21,7 @@ from jwt import PyJWKClient
 from supabase_repo import ensure_organization, list_people as supabase_list_people, create_person as supabase_create_person, delete_person as supabase_delete_person, list_attendance as supabase_list_attendance, create_attendance as supabase_create_attendance, delete_attendance as supabase_delete_attendance, upload_face_image, create_signed_image_url, SupabaseRepositoryError
 
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "").rstrip("/")
+LOCAL_DEMO_MODE = os.environ.get("LOCAL_DEMO_MODE", "false").lower() == "true"
 SUPABASE_JWT_SECRET = os.environ.get("SUPABASE_JWT_SECRET", "")
 SUPABASE_JWKS_URL = f"{SUPABASE_URL}/auth/v1/.well-known/jwks.json" if SUPABASE_URL else ""
 _jwks_client = PyJWKClient(SUPABASE_JWKS_URL) if SUPABASE_JWKS_URL else None
@@ -238,6 +239,8 @@ def save_settings(settings: Dict[str, Any]):
 
 def load_persons() -> List[Dict[str, Any]]:
     global _in_memory_persons
+    if not LOCAL_DEMO_MODE:
+        return list(_in_memory_persons)
     persons_map = {}
     
     # 1. From file if exists
@@ -311,6 +314,8 @@ def save_persons_list(persons: List[Dict[str, Any]]):
 
 def load_attendance_records() -> List[Dict[str, Any]]:
     global _in_memory_records
+    if not LOCAL_DEMO_MODE:
+        return list(_in_memory_records)
     records = []
     
     # 1. From file

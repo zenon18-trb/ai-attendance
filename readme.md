@@ -9,7 +9,7 @@
 [![WebSockets](https://img.shields.io/badge/WebSockets-Real--Time-010101?style=for-the-badge&logo=socketdotio&logoColor=white)](https://developer.mozilla.org/en-US/docs/Web/API/WebSockets_API)
 [![License](https://img.shields.io/badge/License-MIT-green.svg?style=for-the-badge)](LICENSE)
 
-*An enterprise-grade, contactless AI Attendance System featuring a cyber-luxe web dashboard, live WebRTC camera scanner, real-time facial feature matching, automated late-arrival calculations, and multi-format report exports.*
+*A secure, contactless AI Attendance System featuring a cyber-luxe web dashboard, live WebRTC camera scanner, real-time facial feature matching, organization-scoped Supabase storage, automated late-arrival calculations, and multi-format report exports.*
 
 ---
 
@@ -38,7 +38,7 @@
   - Dual enrollment modes:
     - **Mode A (Live Camera Snap)**: Instant webcam capture with alignment guide.
     - **Mode B (File Upload)**: Drag-and-drop `.jpg`/`.png` image upload.
-  - Automatically synchronizes with the `Images/` folder and `Attendence.csv`.
+  - Stores people records in Supabase Postgres and face images in a private, organization-scoped Supabase Storage bucket.
 
 - 📋 **Audit Logs & Multi-Format Export**:
   - Real-time searchable table filterable by date, department, and status.
@@ -75,9 +75,9 @@ graph TD
     end
 
     subgraph Storage ["Persistence Layer"]
-        K["Attendence.csv (Excel Sync)"]
-        L["JSON Database (Enriched Metadata)"]
-        M["Images/ (Face Encodings & Photos)"]
+        K["Supabase Postgres (Organizations, People, Attendance)"]
+        L["Private Supabase Storage (Face Images)"]
+        M["CSV/JSON (Offline Export & Local Demo Mode Only)"]
     end
 
     A -->|Live Frames| G
@@ -100,7 +100,7 @@ graph TD
 | **Web Frontend** | **HTML5 / Vanilla CSS3 / Modern JavaScript** | Zero heavy build tool overhead, glassmorphic styling, and reactive state management. |
 | **Live Media & HUD** | **WebRTC / Canvas API** | Browser-level camera streaming and real-time bounding box target rendering. |
 | **Audio Feedback** | **Web Audio API / Web Speech API** | Synthesized check-in chime and vocalized welcome announcements. |
-| **Storage & Sync** | **CSV / JSON File Stores** | Direct two-way synchronization with `Attendence.csv` and metadata storage. |
+| **Storage & Security** | **Supabase Postgres / Storage / RLS** | Organization-scoped people and attendance records, private face images, and row-level access policies. |
 | **Report Generation** | **ReportLab** | Generates standalone PDF documentation and attendance summaries. |
 
 ---
@@ -113,16 +113,21 @@ Ensure you have **Python 3.10+** installed on your system.
 ### 2. Installation
 Clone the repository and install the dependencies:
 ```bash
-git clone https://github.com/zenon18-trb/AI-Face-Recognition-Attendance-System.git
-cd AI-Face-Recognition-Attendance-System
+git clone https://github.com/zenon18-trb/ai-attendance.git
+cd ai-attendance
 
 # Create virtual environment (Optional but recommended)
 python -m venv .venv
 .\.venv\Scripts\activate  # On Windows
 # source .venv/bin/activate  # On Linux / macOS
 
-# Install required dependencies
-pip install fastapi uvicorn[standard] python-multipart pydantic jinja2 pillow numpy opencv-python reportlab
+# Install pinned project dependencies
+pip install -r requirements.txt
+
+# Supabase production variables are required:
+# SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, SUPABASE_JWT_SECRET
+# Optional local-only demo mode:
+# LOCAL_DEMO_MODE=true
 ```
 
 ### 3. Run the Application
@@ -154,7 +159,7 @@ graph LR
 - Click **`+ Enroll New Person`**.
 - Choose **Snap with Camera** (take live photo) or **Upload Image File** (`.jpg`, `.png`).
 - Enter Full Name, Department, and Role, then click **Save & Enroll**.
-- *Alternative*: Drop colleague photos directly into the `Images/` folder (e.g. `Images/John_Doe.jpg`).
+- Enrollment uploads are stored in the private Supabase `face-images` bucket. Direct file copying is not supported in production.
 
 ### 2. Taking Real-Time Attendance
 - Go to the **AI Scanner Kiosk** tab.
@@ -168,6 +173,14 @@ graph LR
 
 ---
 
+## 🔐 Security and Deployment Notes
+
+- All `/api/*` routes except `/health` and `/api/supabase-config` require a valid Supabase JWT in the `Authorization: Bearer <token>` header.
+- Organization membership scopes people, attendance, and face-image access through Supabase RLS and Storage policies.
+- Production uses Supabase as the source of truth. Local JSON files are used only when `LOCAL_DEMO_MODE=true`.
+- Configure the Supabase schema and private `face-images` bucket before deploying. Never expose `SUPABASE_SERVICE_ROLE_KEY` to browser code.
+- The application is a Python/FastAPI project and does not require `package.json` or a JavaScript build step.
+
 ## 🔌 API Endpoints
 
 | Method | Endpoint | Description |
@@ -180,7 +193,7 @@ graph LR
 | `DELETE` | `/api/attendance/{id}` | Delete a specific attendance record. |
 | `GET` | `/api/persons` | Retrieve list of all enrolled personnel with attendance stats and photo URLs. |
 | `POST` | `/api/persons` | Enroll a new person with photo upload/capture and metadata. |
-| `DELETE` | `/api/persons/{name}` | Un-enroll a person and remove their photo file. |
+| `DELETE` | `/api/persons/{name}` | Un-enroll a person and remove the organization-scoped record. |
 | `GET` | `/api/analytics` | Retrieve KPI metrics, 24-hour hourly traffic data, and department distributions. |
 | `GET / POST`| `/api/settings` | Retrieve or update system rules (Start time, grace period, cooldown duration). |
 | `WebSocket` | `/ws/live` | Real-time live event stream broadcasting check-in events across all active clients. |
@@ -190,22 +203,22 @@ graph LR
 ## 📁 Project Structure
 
 ```
-AI-Face-Recognition-Attendance-System/
+ai-attendance/
 ├── app.py                              # FastAPI backend, REST endpoints & WebSocket hub
+├── supabase_repo.py                    # Supabase Postgres and private Storage repository
 ├── run_server.bat                      # One-click launcher script for Windows
 ├── generate_report_pdf.py              # Automated PDF documentation generator
 ├── AI_Attendance_System_Documentation.pdf # Standalone project documentation PDF
-├── Attendence.csv                      # Synchronized attendance CSV spreadsheet
+├── Attendence.csv                      # Offline/export CSV, not the production source of truth
 ├── Main.py                             # Original legacy OpenCV CLI script
+├── requirements.txt                    # Python dependencies
 ├── .gitignore                          # Clean Git ignore rules (excludes .venv and caches)
-├── README.md                           # Master repository documentation
-├── Images/                             # Enrolled staff face photos
-│   ├── abhi.jpg
-│   └── elonmusk.jpg
+├── readme.md                           # Repository documentation
+├── Images/                             # Legacy/local demo assets only
 ├── data/
-│   ├── attendance_logs.json            # Enriched attendance database with snapshots
-│   ├── persons.json                    # Enrolled staff roster metadata
-│   ├── settings.json                   # Configurable attendance rules & thresholds
+│   ├── attendance_logs.json            # Local demo data when LOCAL_DEMO_MODE=true
+│   ├── persons.json                    # Local demo roster when LOCAL_DEMO_MODE=true
+│   ├── settings.json                   # Local settings and thresholds
 │   └── haarcascade_frontalface_default.xml # Cascade reference
 └── static/
     ├── index.html                      # Single Page Application frontend

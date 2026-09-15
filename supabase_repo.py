@@ -92,6 +92,18 @@ def create_attendance(organization_id: str, record: Dict[str, Any]) -> Dict[str,
     return _request("attendance_logs", "POST", {"organization_id": organization_id, **record})[0]
 
 
+def list_attendance_filtered(organization_id: str, search: Optional[str] = None, status: Optional[str] = None, limit: int = 100, offset: int = 0) -> List[Dict[str, Any]]:
+    filters = [f"organization_id=eq.{organization_id}"]
+    if status and status != "All":
+        filters.append(f"status=eq.{status}")
+    query = "&".join(filters) + f"&select=*&order=captured_at.desc&limit={min(max(limit, 1), 500)}&offset={max(offset, 0)}"
+    rows = list_attendance(organization_id, limit, offset) if not status else _request(f"attendance_logs?{query}") or []
+    if search:
+        needle = search.lower()
+        rows = [row for row in rows if needle in row.get("person_name", "").lower()]
+    return rows
+
+
 def delete_attendance(organization_id: str, record_id: str) -> None:
     _request(f"attendance_logs?id=eq.{record_id}&organization_id=eq.{organization_id}", "DELETE")
 

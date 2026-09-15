@@ -18,7 +18,7 @@ from pydantic import BaseModel, Field, ConfigDict
 from PIL import Image
 import jwt
 from jwt import PyJWKClient
-from supabase_repo import ensure_organization, list_people as supabase_list_people, create_person as supabase_create_person, delete_person as supabase_delete_person, upload_face_image, create_signed_image_url, SupabaseRepositoryError
+from supabase_repo import ensure_organization, list_people as supabase_list_people, create_person as supabase_create_person, delete_person as supabase_delete_person, list_attendance as supabase_list_attendance, create_attendance as supabase_create_attendance, delete_attendance as supabase_delete_attendance, upload_face_image, create_signed_image_url, SupabaseRepositoryError
 
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "").rstrip("/")
 SUPABASE_JWT_SECRET = os.environ.get("SUPABASE_JWT_SECRET", "")
@@ -585,14 +585,24 @@ async def get_system_status():
 
 @app.get("/api/attendance")
 async def get_attendance(
+    request: Request,
     search: Optional[str] = None,
     date_filter: Optional[str] = None,
     department: Optional[str] = None,
     status: Optional[str] = None,
-    limit: int = 100,
-    offset: int = 0
+    limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0)
 ):
-    records = load_attendance_records()
+    try:
+        rows = supabase_list_attendance(request.state.organization_id, limit=500, offset=0)
+        records = [{
+            "id": row["id"], "name": row["person_name"], "displayName": row["person_name"],
+            "date": row.get("captured_at", "")[:10], "time": row.get("captured_at", "")[11:19],
+            "status": row.get("status", "Present"), "confidence": float(row["confidence"] or 0) * 100 if row.get("confidence") is not None else 0,
+            "snapshot": create_signed_image_url(row.get("snapshot_path", "")), "method": "AI Facial Recognition",
+        } for row in rows]
+    except SupabaseRepositoryError:
+        records = load_attendance_records()
     filtered = records
 
     if search:
@@ -619,7 +629,7 @@ async def get_attendance(
     }
 
 @app.post("/api/attendance/mark")
-async def mark_attendance(req: MarkAttendanceRequest):
+async def mark_attendance(req: MarkAttendanceRequest, request: Request):
     settings = load_settings()
     name_upper = req.name.strip().upper()
     now = datetime.now()
@@ -692,10 +702,20 @@ async def mark_attendance(req: MarkAttendanceRequest):
         "timestamp": int(now_ts * 1000)
     }
 
-    # Save to JSON & Append to CSV
-    records = load_attendance_records()
-    records.insert(0, new_record)
-    save_attendance_records(records)
+    try:
+        stored = supabase_create_attendance(request.state.organization_id, {
+            "person_name": name_upper,
+            "status": "Present" if status == "On Time" else status,
+            "confidence": min(max((req.confidence or 98.0) / 100, 0), 1),
+            "captured_at": now.isoformat(),
+            "snapshot_path": None,
+        })
+        new_record["id"] = stored["id"]
+        new_record["timestamp"] = stored.get("captured_at", now.isoformat())
+    except SupabaseRepositoryError as exc:
+        raise HTTPException(status_code=503, detail="Attendance service unavailable") from exc
+
+    # Keep the local CSV as an offline export only; Supabase is the source of truth.
     append_to_csv(name_upper, t_str, d_str)
 
     # Update cooldown memory
@@ -712,7 +732,7 @@ async def mark_attendance(req: MarkAttendanceRequest):
     }
 
 @app.post("/api/recognize_frame")
-async def recognize_camera_frame(req: FrameRecognizeRequest):
+async def recognize_camera_frame(req: FrameRecognizeRequest, request: Request):
     if not req.frameBase64 or not req.frameBase64.startswith("data:image"):
         raise HTTPException(status_code=400, detail="Invalid frame")
     
@@ -838,7 +858,7 @@ async def recognize_camera_frame(req: FrameRecognizeRequest):
                 confidence=confidence,
                 method=method_used,
                 snapshot=req.frameBase64
-            ))
+            ), request)
             
             if isinstance(mark_res, JSONResponse):
                 res_dict = json.loads(mark_res.body.decode())
@@ -865,7 +885,14 @@ async def recognize_camera_frame(req: FrameRecognizeRequest):
 
 
 @app.delete("/api/attendance/{record_id}")
-async def delete_attendance_record(record_id: str):
+async def delete_attendance_record(record_id: str, request: Request):
+    try:
+        supabase_delete_attendance(request.state.organization_id, record_id)
+    except SupabaseRepositoryError as exc:
+        raise HTTPException(status_code=503, detail="Attendance service unavailable") from exc
+    await broadcast_event("ATTENDANCE_DELETED", {"id": record_id})
+    return {"success": True, "message": "Record deleted"}
+
     records = load_attendance_records()
     initial_len = len(records)
     records = [r for r in records if r.get("id") != record_id]

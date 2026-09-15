@@ -6,7 +6,7 @@
 // Global Application State
 const AppState = {
   currentView: 'scanner',
-  theme: localStorage.getItem('app_theme') || 'dark',
+  theme: localStorage.getItem('ai_attendance_theme') || localStorage.getItem('app_theme') || 'dark',
   persons: [],
   attendanceLogs: [],
   analytics: null,
@@ -58,7 +58,7 @@ function initTheme() {
     themeBtn.addEventListener('click', () => {
       AppState.theme = AppState.theme === 'dark' ? 'light' : 'dark';
       document.documentElement.setAttribute('data-theme', AppState.theme);
-      localStorage.setItem('aegis_theme', AppState.theme);
+      localStorage.setItem('ai_attendance_theme', AppState.theme);
       renderAnalyticsCharts();
     });
   }

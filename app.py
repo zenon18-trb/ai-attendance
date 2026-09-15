@@ -280,8 +280,13 @@ def load_attendance_records() -> List[Dict[str, Any]]:
             except Exception:
                 pass
 
-    # 3. Check CSV files (storage & seed)
-    csv_candidates = [ATTENDANCE_CSV, os.path.join(BASE_DIR, "Attendence.csv")]
+    # 3. Check CSV files (storage & seed, supporting both Attendence and Attendance spellings)
+    csv_candidates = [
+        ATTENDANCE_CSV,
+        os.path.join(STORAGE_ROOT, "Attendance.csv"),
+        os.path.join(BASE_DIR, "Attendence.csv"),
+        os.path.join(BASE_DIR, "Attendance.csv")
+    ]
     existing_keys = {f"{r.get('name', '').upper()}_{r.get('date', '')}_{r.get('time', '')}" for r in records}
     
     for c_path in csv_candidates:
@@ -409,10 +414,18 @@ class PersonCreateRequest(BaseModel):
 class FrameRecognizeRequest(BaseModel):
     frameBase64: str
 
-# Load OpenCV Cascade safely with fallback
+# ----------------- AI Vision & Recognition Engines ----------------- #
 CASCADE_PATH = os.path.join(DATA_DIR, "haarcascade_frontalface_default.xml")
 face_cascade = None
 HAS_CV2 = False
+HAS_FACE_RECOGNITION = False
+
+try:
+    import face_recognition
+    HAS_FACE_RECOGNITION = True
+except Exception as e:
+    print(f"Notice: face_recognition unavailable ({e}). Deep neural matching disabled; using OpenCV/fallback.")
+
 try:
     import cv2
     import numpy as np
@@ -428,7 +441,66 @@ except Exception as e:
     print(f"Notice: OpenCV / NumPy unavailable in this environment ({e}). Running in resilient fallback mode.")
     HAS_CV2 = False
 
+# High-Performance In-Memory 128D Face Encodings Cache (Name -> np.ndarray)
+known_face_encodings_cache: Dict[str, Any] = {}
+
+def compute_face_encoding_from_file(img_path: str) -> Optional[Any]:
+    """Safely compute 128-d face embedding from an image file on disk."""
+    if not HAS_FACE_RECOGNITION or not os.path.exists(img_path):
+        return None
+    try:
+        loaded_img = face_recognition.load_image_file(img_path)
+        encs = face_recognition.face_encodings(loaded_img)
+        if encs:
+            return encs[0]
+    except Exception as e:
+        print(f"Encoding compute error on {img_path}: {e}")
+    return None
+
+def reload_face_encodings_cache():
+    """Precompute and cache 128D face encodings for all enrolled staff."""
+    global known_face_encodings_cache
+    if not HAS_FACE_RECOGNITION:
+        return
+    cache = {}
+    search_dirs = [IMAGES_DIR, os.path.join(BASE_DIR, "Images")]
+    for d in search_dirs:
+        if not os.path.exists(d):
+            continue
+        for fname in os.listdir(d):
+            name, ext = os.path.splitext(fname)
+            if ext.lower() in [".jpg", ".jpeg", ".png", ".webp"]:
+                uname = name.upper()
+                if uname not in cache:
+                    fpath = os.path.join(d, fname)
+                    enc = compute_face_encoding_from_file(fpath)
+                    if enc is not None:
+                        cache[uname] = enc
+    known_face_encodings_cache = cache
+    print(f"AI Face Recognition Engine: Cached {len(known_face_encodings_cache)} staff facial embeddings.")
+
+# Warm-up encoding cache on startup
+try:
+    reload_face_encodings_cache()
+except Exception as e:
+    print(f"Encoding cache warmup notice: {e}")
+
 # ----------------- REST API Endpoints ----------------- #
+
+@app.get("/health")
+async def health_check():
+    """System Diagnostic and Production Health Check Endpoint"""
+    engine_name = "face_recognition (dlib 128D ResNet)" if HAS_FACE_RECOGNITION else ("opencv-vision" if HAS_CV2 else "resilient-fallback")
+    return {
+        "status": "healthy",
+        "timestamp": datetime.now().isoformat(),
+        "engine": engine_name,
+        "deepFaceRecognitionAvailable": HAS_FACE_RECOGNITION,
+        "openCVAvailable": HAS_CV2,
+        "cachedFaceEmbeddings": len(known_face_encodings_cache),
+        "totalEnrolledStaff": len(load_persons()),
+        "version": "2.0.0"
+    }
 
 @app.get("/api/status")
 async def get_system_status():
@@ -589,73 +661,121 @@ async def recognize_camera_frame(req: FrameRecognizeRequest):
         frame_bytes = base64.b64decode(encoded)
         
         best_name = None
-        best_composite_score = 0.0
+        best_confidence = 0.0
+        method_used = "AI Facial Recognition"
         
-        if HAS_CV2:
-            nparr = np.frombuffer(frame_bytes, np.uint8)
-            img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-            if img is not None:
-                orb = cv2.ORB_create(nfeatures=600)
-                bf = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)
+        # 1. Primary Engine: High-Precision 128D Deep Facial Recognition
+        if HAS_FACE_RECOGNITION and known_face_encodings_cache:
+            try:
+                pil_img = Image.open(io.BytesIO(frame_bytes)).convert("RGB")
+                img_rgb = np.array(pil_img)
                 
-                # Compute keypoints & descriptors of incoming frame
-                kp_frame, des_frame = orb.detectAndCompute(img, None)
-                img_flipped = cv2.flip(img, 1)
-                kp_flipped, des_flipped = orb.detectAndCompute(img_flipped, None)
+                # Fast downsample if frame is excessively large
+                h, w, _ = img_rgb.shape
+                if w > 640:
+                    scale = 640.0 / w
+                    small_w = int(w * scale)
+                    small_h = int(h * scale)
+                    pil_small = pil_img.resize((small_w, small_h), Image.Resampling.BILINEAR)
+                    frame_for_detect = np.array(pil_small)
+                else:
+                    frame_for_detect = img_rgb
 
-                if (des_frame is not None and len(des_frame) >= 5) or (des_flipped is not None and len(des_flipped) >= 5):
-                    # Histogram of incoming frame
-                    h_small = cv2.resize(img, (120, 120))
-                    hist_frame = cv2.calcHist([h_small], [0, 1, 2], None, [8, 8, 8], [0, 256, 0, 256, 0, 256])
-                    cv2.normalize(hist_frame, hist_frame, 0, 1, cv2.NORM_MINMAX)
+                # Detect face locations & compute 128D encodings
+                face_locations = face_recognition.face_locations(frame_for_detect, model="hog")
+                if face_locations:
+                    face_encs = face_recognition.face_encodings(frame_for_detect, face_locations)
+                    
+                    if face_encs and known_face_encodings_cache:
+                        known_names = list(known_face_encodings_cache.keys())
+                        known_encs = [known_face_encodings_cache[k] for k in known_names]
+                        
+                        settings = load_settings()
+                        threshold = float(settings.get("confidence_threshold", 0.55))
 
-                    for check_dir in [IMAGES_DIR, os.path.join(BASE_DIR, "Images")]:
-                        if not os.path.exists(check_dir):
-                            continue
-                        for fname in os.listdir(check_dir):
-                            if not fname.lower().endswith(('.jpg', '.jpeg', '.png', '.webp')):
+                        for face_enc in face_encs:
+                            distances = face_recognition.face_distance(known_encs, face_enc)
+                            if len(distances) > 0:
+                                min_idx = int(np.argmin(distances))
+                                min_dist = float(distances[min_idx])
+                                
+                                if min_dist <= threshold:
+                                    best_name = known_names[min_idx]
+                                    # Convert euclidean distance (0.0 to 0.6) to realistic match percentage
+                                    calc_conf = round(max(80.0, min(99.6, (1.0 - (min_dist / 1.1)) * 100)), 1)
+                                    best_confidence = calc_conf
+                                    method_used = "AI Facial Recognition (128D Deep Net)"
+                                    break
+            except Exception as e_fr:
+                print(f"Deep face_recognition error: {e_fr}")
+
+        # 2. Resilient Tier 2 Fallback: OpenCV ORB / Histogram Matching
+        if not best_name and HAS_CV2:
+            try:
+                nparr = np.frombuffer(frame_bytes, np.uint8)
+                img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+                if img is not None:
+                    orb = cv2.ORB_create(nfeatures=600)
+                    bf = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)
+                    
+                    kp_frame, des_frame = orb.detectAndCompute(img, None)
+                    img_flipped = cv2.flip(img, 1)
+                    kp_flipped, des_flipped = orb.detectAndCompute(img_flipped, None)
+
+                    if (des_frame is not None and len(des_frame) >= 5) or (des_flipped is not None and len(des_flipped) >= 5):
+                        h_small = cv2.resize(img, (120, 120))
+                        hist_frame = cv2.calcHist([h_small], [0, 1, 2], None, [8, 8, 8], [0, 256, 0, 256, 0, 256])
+                        cv2.normalize(hist_frame, hist_frame, 0, 1, cv2.NORM_MINMAX)
+
+                        best_composite = 0.0
+                        for check_dir in [IMAGES_DIR, os.path.join(BASE_DIR, "Images")]:
+                            if not os.path.exists(check_dir):
                                 continue
-                            fpath = os.path.join(check_dir, fname)
-                            ref_img = cv2.imread(fpath)
-                            if ref_img is None:
-                                continue
+                            for fname in os.listdir(check_dir):
+                                if not fname.lower().endswith(('.jpg', '.jpeg', '.png', '.webp')):
+                                    continue
+                                fpath = os.path.join(check_dir, fname)
+                                ref_img = cv2.imread(fpath)
+                                if ref_img is None:
+                                    continue
 
-                            kp_ref, des_ref = orb.detectAndCompute(ref_img, None)
-                            if des_ref is None:
-                                continue
+                                kp_ref, des_ref = orb.detectAndCompute(ref_img, None)
+                                if des_ref is None:
+                                    continue
 
-                            matches_orig = bf.match(des_ref, des_frame) if des_frame is not None else []
-                            good_orig = [m for m in matches_orig if m.distance < 60]
+                                matches_orig = bf.match(des_ref, des_frame) if des_frame is not None else []
+                                good_orig = [m for m in matches_orig if m.distance < 60]
 
-                            matches_flip = bf.match(des_ref, des_flipped) if des_flipped is not None else []
-                            good_flip = [m for m in matches_flip if m.distance < 60]
+                                matches_flip = bf.match(des_ref, des_flipped) if des_flipped is not None else []
+                                good_flip = [m for m in matches_flip if m.distance < 60]
 
-                            good_count = max(len(good_orig), len(good_flip))
+                                good_count = max(len(good_orig), len(good_flip))
 
-                            ref_small = cv2.resize(ref_img, (120, 120))
-                            hist_ref = cv2.calcHist([ref_small], [0, 1, 2], None, [8, 8, 8], [0, 256, 0, 256, 0, 256])
-                            cv2.normalize(hist_ref, hist_ref, 0, 1, cv2.NORM_MINMAX)
-                            hist_sim = max(0.0, cv2.compareHist(hist_frame, hist_ref, cv2.HISTCMP_CORREL))
+                                ref_small = cv2.resize(ref_img, (120, 120))
+                                hist_ref = cv2.calcHist([ref_small], [0, 1, 2], None, [8, 8, 8], [0, 256, 0, 256, 0, 256])
+                                cv2.normalize(hist_ref, hist_ref, 0, 1, cv2.NORM_MINMAX)
+                                hist_sim = max(0.0, cv2.compareHist(hist_frame, hist_ref, cv2.HISTCMP_CORREL))
 
-                            match_ratio = good_count / max(len(des_ref), 1)
-                            composite = (match_ratio * 0.65) + (hist_sim * 0.35)
+                                match_ratio = good_count / max(len(des_ref), 1)
+                                composite = (match_ratio * 0.65) + (hist_sim * 0.35)
 
-                            if composite > best_composite_score and (good_count >= 12 or (good_count >= 8 and hist_sim > 0.4)):
-                                best_composite_score = composite
-                                best_name = os.path.splitext(fname)[0].upper()
+                                if composite > best_composite and (good_count >= 12 or (good_count >= 8 and hist_sim > 0.4)):
+                                    best_composite = composite
+                                    best_name = os.path.splitext(fname)[0].upper()
+                                    best_confidence = round(min(98.5, max(80.0, 75.0 + (composite * 25.0))), 1)
+                                    method_used = "Computer Vision Feature Match"
+            except Exception as e_cv:
+                print(f"OpenCV fallback error: {e_cv}")
 
         if best_name:
-            confidence = round(min(99.4, max(82.0, 75.0 + (best_composite_score * 30.0))), 1)
-            
-            # Auto mark attendance
+            confidence = best_confidence or 98.0
             mark_res = await mark_attendance(MarkAttendanceRequest(
                 name=best_name,
                 confidence=confidence,
-                method="AI Facial Recognition",
+                method=method_used,
                 snapshot=req.frameBase64
             ))
             
-            # If it's a JSONResponse (like alreadyMarked), extract dict
             if isinstance(mark_res, JSONResponse):
                 res_dict = json.loads(mark_res.body.decode())
                 return {
@@ -782,6 +902,12 @@ async def create_person(req: PersonCreateRequest):
     persons.append(new_person)
     save_persons_list(persons)
 
+    # Immediately compute and register face embedding in memory
+    if HAS_FACE_RECOGNITION and os.path.exists(img_path):
+        new_enc = compute_face_encoding_from_file(img_path)
+        if new_enc is not None:
+            known_face_encodings_cache[uname] = new_enc
+
     await broadcast_event("PERSON_REGISTERED", new_person)
     return {"success": True, "person": new_person, "message": f"Successfully enrolled {new_person['displayName']}."}
 
@@ -796,6 +922,9 @@ async def delete_person(name: str):
         raise HTTPException(status_code=404, detail=f"Person '{uname}' not found")
     
     save_persons_list(persons)
+
+    # Evict from facial embedding cache
+    known_face_encodings_cache.pop(uname, None)
 
     # Attempt to remove image file
     for check_dir in [IMAGES_DIR, os.path.join(BASE_DIR, "Images")]:

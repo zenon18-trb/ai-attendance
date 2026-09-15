@@ -1,5 +1,50 @@
 [
   {
+    "id": "ATT-1789500259011",
+    "name": "ALEX_RIVERA",
+    "displayName": "Alex Rivera",
+    "department": "Engineering",
+    "role": "Team Member",
+    "time": "00:54:19",
+    "date": "16/09/2026",
+    "status": "On Time",
+    "confidence": 84.1,
+    "method": "Computer Vision Feature Match",
+    "snapshot": "/api/snapshots/snap_ALEX_RIVERA_1789500259.jpg",
+    "deviceInfo": "Front Door AI Kiosk",
+    "timestamp": 1789500259011
+  },
+  {
+    "id": "ATT-1789499668157",
+    "name": "ELONMUSK",
+    "displayName": "Elonmusk",
+    "department": "Engineering",
+    "role": "Team Member",
+    "time": "00:44:28",
+    "date": "16/09/2026",
+    "status": "On Time",
+    "confidence": 99.6,
+    "method": "AI Facial Recognition (128D Deep Net)",
+    "snapshot": "/api/snapshots/snap_ELONMUSK_1789499668.jpg",
+    "deviceInfo": "Front Door AI Kiosk",
+    "timestamp": 1789499668157
+  },
+  {
+    "id": "ATT-1789499498857",
+    "name": "ABHI",
+    "displayName": "Abhi",
+    "department": "Engineering",
+    "role": "Team Member",
+    "time": "00:41:38",
+    "date": "16/09/2026",
+    "status": "On Time",
+    "confidence": 99.2,
+    "method": "AI Facial Recognition",
+    "snapshot": "/api/persons/photo/abhi.jpg",
+    "deviceInfo": "Front Door AI Kiosk",
+    "timestamp": 1789499498857
+  },
+  {
     "id": "ATT-1788887393839-19",
     "name": "ELON MUSK",
     "displayName": "Elon Musk",
@@ -68,6 +113,20 @@
     "method": "AI Facial Recognition",
     "snapshot": "",
     "timestamp": 1788887908763
+  },
+  {
+    "id": "ATT-1789499498860-20",
+    "name": "ABHI",
+    "displayName": "Abhi",
+    "department": "Engineering",
+    "role": "Team Member",
+    "time": "22:09:10",
+    "date": "08/09/2026",
+    "status": "Late",
+    "confidence": 98.5,
+    "method": "AI Facial Recognition",
+    "snapshot": "/api/persons/photo/abhi.jpg",
+    "timestamp": 1789499498860
   },
   {
     "id": "ATT-1788885423669",

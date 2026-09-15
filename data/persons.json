@@ -20,5 +20,60 @@
     "image": "https://images.unsplash.com/photo-1567532939604-b6b5b0db2604?w=400&auto=format&fit=crop&q=80",
     "registeredDate": "2026-03-01",
     "active": true
+  },
+  {
+    "id": "EMP-0003",
+    "name": "ABHI",
+    "displayName": "Abhi",
+    "department": "Engineering",
+    "role": "Team Member",
+    "email": "abhi@company.ai",
+    "image": "/api/persons/photo/abhi.jpg",
+    "registeredDate": "2026-09-16",
+    "active": true
+  },
+  {
+    "id": "EMP-0004",
+    "name": "ALEX_RIVERA",
+    "displayName": "Alex Rivera",
+    "department": "Engineering",
+    "role": "Team Member",
+    "email": "alex_rivera@company.ai",
+    "image": "/api/persons/photo/alex_rivera.jpg",
+    "registeredDate": "2026-09-16",
+    "active": true
+  },
+  {
+    "id": "EMP-0005",
+    "name": "ELONMUSK",
+    "displayName": "Elonmusk",
+    "department": "Engineering",
+    "role": "Team Member",
+    "email": "elonmusk@company.ai",
+    "image": "/api/persons/photo/elonmusk.jpg",
+    "registeredDate": "2026-09-16",
+    "active": true
+  },
+  {
+    "id": "EMP-0006",
+    "name": "MARCUS_VANCE",
+    "displayName": "Marcus Vance",
+    "department": "Engineering",
+    "role": "Team Member",
+    "email": "marcus_vance@company.ai",
+    "image": "/api/persons/photo/marcus_vance.jpg",
+    "registeredDate": "2026-09-16",
+    "active": true
+  },
+  {
+    "id": "EMP-0007",
+    "name": "PRIYA_SHARMA",
+    "displayName": "Priya Sharma",
+    "department": "Engineering",
+    "role": "Team Member",
+    "email": "priya_sharma@company.ai",
+    "image": "/api/persons/photo/priya_sharma.jpg",
+    "registeredDate": "2026-09-16",
+    "active": true
   }
 ]

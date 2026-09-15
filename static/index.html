@@ -53,9 +53,16 @@
     </div>
 
     <nav class="sidebar-nav">
+      <div class="nav-section-title">Overview</div>
+
+      <a class="nav-item active" data-view="dashboard" id="navDashboard">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+        <span>Dashboard</span>
+      </a>
+
       <div class="nav-section-title">Operations</div>
       
-      <a class="nav-item active" data-view="scanner" id="navScanner">
+      <a class="nav-item" data-view="scanner" id="navScanner">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
         <span>Attendance Scanner</span>
         <span class="nav-badge" id="badgeLive">LIVE</span>
@@ -78,6 +85,11 @@
       <a class="nav-item" data-view="analytics" id="navAnalytics">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
         <span>Analytics</span>
+      </a>
+
+      <a class="nav-item" data-view="reports" id="navReports">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="14" y2="17"/></svg>
+        <span>Reports</span>
       </a>
 
       <a class="nav-item" data-view="settings" id="navSettings">
@@ -128,6 +140,7 @@
         </button>
 
         <!-- Theme Toggle Switch -->
+        <button class="icon-btn" id="btnSignOut" title="Sign out" aria-label="Sign out">↪</button>
         <button class="icon-btn" id="btnToggleTheme" title="Toggle Dark/Light Mode">
           <svg id="themeIcon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
         </button>
@@ -138,9 +151,29 @@
     <main class="content-container">
 
       <!-- ===================================================================
+           VIEW 0: DASHBOARD
+           =================================================================== -->
+      <section class="view-section active-view" id="viewDashboard">
+        <div class="welcome-panel">
+          <div><p class="eyebrow">Today&apos;s overview</p><h2>Good morning, your attendance is on track.</h2><p>Monitor check-ins, find patterns, and take action from one calm workspace.</p></div>
+          <button class="btn btn-primary" data-view-jump="scanner">Open scanner</button>
+        </div>
+        <div class="dashboard-kpis">
+          <div class="metric-card"><span class="metric-title">People registered</span><strong id="dashPeople">0</strong><span class="metric-footer">Active directory</span></div>
+          <div class="metric-card green"><span class="metric-title">Present today</span><strong id="dashPresent">0</strong><span class="metric-footer" id="dashRate">0% attendance rate</span></div>
+          <div class="metric-card amber"><span class="metric-title">Late arrivals</span><strong id="dashLate">0</strong><span class="metric-footer">Needs attention</span></div>
+          <div class="metric-card rose"><span class="metric-title">Not checked in</span><strong id="dashAbsent">0</strong><span class="metric-footer">People remaining</span></div>
+        </div>
+        <div class="dashboard-grid">
+          <div class="chart-card dashboard-panel"><div class="section-heading"><div><h3>Recent attendance</h3><p>Latest check-ins across your organization.</p></div><button class="btn btn-secondary btn-sm" data-view-jump="logs">View all</button></div><div id="dashboardRecent" class="dashboard-recent"></div></div>
+          <div class="chart-card dashboard-panel"><div class="section-heading"><div><h3>Quick actions</h3><p>Common tasks, one click away.</p></div></div><div class="quick-actions"><button class="quick-action" data-view-jump="roster"><strong>Add person</strong><span>Enroll someone new</span></button><button class="quick-action" data-view-jump="scanner"><strong>Start scanner</strong><span>Record attendance</span></button><button class="quick-action" data-view-jump="reports"><strong>Generate report</strong><span>Export a summary</span></button></div></div>
+        </div>
+      </section>
+
+      <!-- ===================================================================
            VIEW 1: AI SCANNER KIOSK
            =================================================================== -->
-      <section class="view-section active-view" id="viewScanner">
+      <section class="view-section" id="viewScanner">
         <div class="scanner-layout">
           
           <!-- Viewfinder Camera Card -->
@@ -426,7 +459,15 @@
       </section>
 
       <!-- ===================================================================
-           VIEW 5: SYSTEM SETTINGS
+           VIEW 5: REPORTS
+           =================================================================== -->
+      <section class="view-section" id="viewReports">
+        <div class="welcome-panel compact"><div><p class="eyebrow">Exports</p><h2>Attendance reports</h2><p>Download the records you need for payroll, compliance, or team updates.</p></div><button class="btn btn-primary" id="btnExportReport">Export CSV</button></div>
+        <div class="chart-card report-card"><div class="section-heading"><div><h3>Report preview</h3><p id="reportSummary">Preparing the latest attendance records.</p></div><span class="hud-badge success">READY</span></div><div id="reportPreview" class="report-preview"></div></div>
+      </section>
+
+      <!-- ===================================================================
+           VIEW 6: SYSTEM SETTINGS
            =================================================================== -->
       <section class="view-section" id="viewSettings">
         

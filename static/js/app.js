@@ -5,7 +5,7 @@
 
 // Global Application State
 const AppState = {
-  currentView: 'scanner',
+  currentView: 'dashboard',
   theme: localStorage.getItem('ai_attendance_theme') || localStorage.getItem('app_theme') || 'dark',
   persons: [],
   attendanceLogs: [],
@@ -99,6 +99,11 @@ document.addEventListener('DOMContentLoaded', async () => {
 
 function initTheme() {
   document.documentElement.setAttribute('data-theme', AppState.theme);
+  const signOutBtn = document.getElementById('btnSignOut');
+  if (signOutBtn) signOutBtn.addEventListener('click', async () => {
+    await supabaseClient?.auth.signOut();
+    window.location.reload();
+  });
   const themeBtn = document.getElementById('btnToggleTheme');
   if (themeBtn) {
     themeBtn.addEventListener('click', () => {
@@ -133,11 +138,28 @@ function initNavigation() {
   const pageTitle = document.getElementById('pageTitle');
 
   const titleMap = {
-    scanner: 'AI Scanner Kiosk',
-    logs: 'Attendance Records & Audit',
-    roster: 'Staff Directory & Face Registry',
-    analytics: 'Executive Intelligence & Analytics',
-    settings: 'System Configuration & Rules'
+    dashboard: 'Dashboard',
+    scanner: 'Attendance Scanner',
+    logs: 'Attendance Records',
+    roster: 'People',
+    analytics: 'Attendance Analytics',
+    reports: 'Attendance Reports',
+    settings: 'Settings'
+  };
+
+  const activateView = (targetView) => {
+    navItems.forEach(n => n.classList.toggle('active', n.getAttribute('data-view') === targetView));
+    viewSections.forEach(s => s.classList.remove('active-view'));
+    const activeSection = document.getElementById(`view${targetView.charAt(0).toUpperCase() + targetView.slice(1)}`);
+    if (activeSection) activeSection.classList.add('active-view');
+    AppState.currentView = targetView;
+    if (pageTitle && titleMap[targetView]) pageTitle.textContent = titleMap[targetView];
+    if (targetView === 'logs') loadAttendanceLogs();
+    if (targetView === 'roster') renderRosterGrid();
+    if (targetView === 'analytics') loadAnalytics();
+    if (targetView === 'dashboard') renderDashboard();
+    if (targetView === 'reports') renderReportPreview();
+    document.getElementById('appSidebar')?.classList.remove('mobile-open');
   };
 
   navItems.forEach(item => {
@@ -145,27 +167,7 @@ function initNavigation() {
       const targetView = item.getAttribute('data-view');
       if (!targetView) return;
 
-      navItems.forEach(n => n.classList.remove('active'));
-      item.classList.add('active');
-
-      viewSections.forEach(s => s.classList.remove('active-view'));
-      const activeSection = document.getElementById(`view${targetView.charAt(0).toUpperCase() + targetView.slice(1)}`);
-      if (activeSection) {
-        activeSection.classList.add('active-view');
-      }
-
-      AppState.currentView = targetView;
-      if (pageTitle && titleMap[targetView]) {
-        pageTitle.textContent = titleMap[targetView];
-      }
-
-      if (targetView === 'logs') {
-        loadAttendanceLogs();
-      } else if (targetView === 'roster') {
-        renderRosterGrid();
-      } else if (targetView === 'analytics') {
-        loadAnalytics();
-      }
+      activateView(targetView);
     });
   });
 
@@ -565,8 +567,10 @@ async function loadPersons() {
     const badge = document.getElementById('badgePersonCount');
     if (badge) badge.textContent = AppState.persons.length;
 
-    renderRosterGrid();
-    populateManualPersonSelect();
+  renderRosterGrid();
+  renderDashboard();
+  renderReportPreview();
+  populateManualPersonSelect();
   } catch (err) {
     console.error('Error loading persons:', err);
   }
@@ -618,6 +622,29 @@ async function loadAnalytics() {
 /* ==========================================================================
    RENDERERS: TABLES, ROSTER, MINI STREAM & CHARTS
    ========================================================================== */
+
+function renderDashboard() {
+  const summary = AppState.analytics?.summary || {};
+  const setText = (id, value) => { const el = document.getElementById(id); if (el) el.textContent = value; };
+  setText('dashPeople', AppState.persons.length || summary.totalRegistered || 0);
+  setText('dashPresent', summary.presentToday || 0);
+  setText('dashLate', summary.lateToday || 0);
+  setText('dashAbsent', Math.max((AppState.persons.length || summary.totalRegistered || 0) - (summary.presentToday || 0), 0));
+  setText('dashRate', `${summary.attendanceRate || 0}% attendance rate`);
+  const recent = document.getElementById('dashboardRecent');
+  if (!recent) return;
+  const records = AppState.attendanceLogs.slice(0, 5);
+  recent.innerHTML = records.length ? records.map(r => `<div class="dashboard-row"><div><strong>${r.displayName || r.name}</strong><span>${r.department || 'General'} · ${r.date}</span></div><div><strong>${r.time}</strong><span class="status-pill ${String(r.status || 'Present').toLowerCase().replace(' ', '')}">${r.status || 'Present'}</span></div></div>`).join('') : '<div class="empty-state">No attendance records yet today.</div>';
+}
+
+function renderReportPreview() {
+  const preview = document.getElementById('reportPreview');
+  const summary = document.getElementById('reportSummary');
+  if (!preview) return;
+  const records = AppState.attendanceLogs.slice(0, 8);
+  if (summary) summary.textContent = `${AppState.attendanceLogs.length} records ready to export.`;
+  preview.innerHTML = records.length ? records.map(r => `<div class="report-row"><span>${r.displayName || r.name}</span><span>${r.date} · ${r.time}</span><span class="status-pill ${String(r.status || 'Present').toLowerCase().replace(' ', '')}">${r.status || 'Present'}</span></div>`).join('') : '<div class="empty-state">No records are available for this report.</div>';
+}
 
 function renderMiniLiveStream(records) {
   const container = document.getElementById('miniStreamList');
@@ -1037,6 +1064,21 @@ function initModals() {
       showToast('Attendance report CSV download started', 'info');
     });
   }
+
+  const reportExportBtn = document.getElementById('btnExportReport');
+  if (reportExportBtn) reportExportBtn.addEventListener('click', () => {
+    window.open('/api/attendance/export?format=csv', '_blank');
+    showToast('Report download started', 'success');
+  });
+
+  document.querySelectorAll('[data-view-jump]').forEach(button => button.addEventListener('click', () => {
+    const target = button.getAttribute('data-view-jump');
+    const nav = document.querySelector(`.nav-item[data-view="${target}"]`);
+    nav?.click();
+  }));
+
+  const dashboardNav = document.getElementById('navDashboard');
+  if (dashboardNav) dashboardNav.classList.add('active');
 
   // Save Settings Button
   const saveSettingsBtn = document.getElementById('btnSaveSettings');

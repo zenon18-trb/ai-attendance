@@ -487,6 +487,13 @@ except Exception as e:
 
 # ----------------- REST API Endpoints ----------------- #
 
+@app.get("/api/supabase-config")
+async def supabase_config():
+    """Expose only the public Supabase client configuration to the browser."""
+    url = os.environ.get("SUPABASE_URL", "")
+    publishable_key = os.environ.get("SUPABASE_PUBLISHABLE_KEY") or os.environ.get("SUPABASE_ANON_KEY", "")
+    return {"url": url, "publishableKey": publishable_key}
+
 @app.get("/health")
 async def health_check():
     """System Diagnostic and Production Health Check Endpoint"""

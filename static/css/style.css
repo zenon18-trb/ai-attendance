@@ -1511,6 +1511,9 @@ input:checked + .slider:before {
 .auth-form input:focus { border-color: var(--accent-cyan); box-shadow: 0 0 0 3px var(--accent-cyan-glow); }
 .auth-form button { width: 100%; margin-top: 12px; }
 .auth-message { min-height: 20px; color: var(--accent-rose); font-size: .78rem; text-align: center; }
+.auth-switch { margin-top: 18px; color: var(--text-secondary); font-size: .8rem; text-align: center; }
+.auth-link { display: inline; width: auto !important; margin: 0 !important; padding: 0; border: 0; background: transparent; color: var(--accent-cyan); font: inherit; font-weight: 700; cursor: pointer; }
+.auth-link:hover { text-decoration: underline; }
 
 /* Calm product refresh */
 :root {

@@ -39,6 +39,33 @@ async function initAuth() {
   const shell = document.getElementById('appShell');
   const form = document.getElementById('authForm');
   const message = document.getElementById('authMessage');
+  const title = document.getElementById('authTitle');
+  const copy = document.getElementById('authCopy');
+  const submit = document.getElementById('authSubmit');
+  const confirmGroup = document.getElementById('authConfirmGroup');
+  const confirmPassword = document.getElementById('authConfirmPassword');
+  const modeToggle = document.getElementById('authModeToggle');
+  const switchText = document.getElementById('authSwitchText');
+  let isSignUp = false;
+
+  const updateAuthMode = () => {
+    title.textContent = isSignUp ? 'Create your account' : 'Sign in to continue';
+    copy.textContent = isSignUp
+      ? 'Set up your secure workspace to start managing attendance.'
+      : 'Use your organization account to manage attendance securely.';
+    submit.textContent = isSignUp ? 'Create account' : 'Sign in';
+    confirmGroup.hidden = !isSignUp;
+    confirmPassword.required = isSignUp;
+    modeToggle.textContent = isSignUp ? 'Back to sign in' : 'Create an account';
+    switchText.firstChild.textContent = isSignUp ? 'Already have an account? ' : 'New to AI Attendance? ';
+    message.textContent = '';
+  };
+
+  modeToggle.addEventListener('click', () => {
+    isSignUp = !isSignUp;
+    updateAuthMode();
+  });
+
   try {
     const config = await fetch('/api/supabase-config').then((response) => response.json());
     if (!config.url || !config.publishableKey || !window.supabase) {
@@ -59,17 +86,47 @@ async function initAuth() {
     shell.hidden = true;
     form.addEventListener('submit', async (event) => {
       event.preventDefault();
-      message.textContent = 'Signing in…';
-      const { error } = await supabaseClient.auth.signInWithPassword({
-        email: document.getElementById('authEmail').value.trim(),
-        password: document.getElementById('authPassword').value
-      });
+      const email = document.getElementById('authEmail').value.trim();
+      const password = document.getElementById('authPassword').value;
+
+      if (isSignUp) {
+        if (password !== confirmPassword.value) {
+          message.textContent = 'Passwords do not match.';
+          confirmPassword.focus();
+          return;
+        }
+        submit.disabled = true;
+        submit.textContent = 'Creating account…';
+        const { data, error } = await supabaseClient.auth.signUp({ email, password });
+        submit.disabled = false;
+        if (error) {
+          message.textContent = error.message.includes('already registered')
+            ? 'That email is already registered. Sign in instead.'
+            : 'We could not create your account. Please check your details and try again.';
+          return;
+        }
+        if (data.session) {
+          window.location.reload();
+        } else {
+          message.textContent = 'Account created. Check your email to confirm your address, then sign in.';
+          isSignUp = false;
+          updateAuthMode();
+        }
+        return;
+      }
+
+      submit.disabled = true;
+      submit.textContent = 'Signing in…';
+      const { error } = await supabaseClient.auth.signInWithPassword({ email, password });
+      submit.disabled = false;
       if (error) {
         message.textContent = 'We could not sign you in. Check your email and password.';
+        submit.textContent = 'Sign in';
         return;
       }
       window.location.reload();
     });
+    updateAuthMode();
     return false;
   } catch (error) {
     message.textContent = 'Sign-in is temporarily unavailable. Please try again.';

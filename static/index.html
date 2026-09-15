@@ -20,15 +20,20 @@
     <div class="auth-mark" aria-hidden="true">✓</div>
     <p class="auth-eyebrow">AI ATTENDANCE</p>
     <h1 id="authTitle">Sign in to continue</h1>
-    <p class="auth-copy">Use your organization account to manage attendance securely.</p>
+    <p class="auth-copy" id="authCopy">Use your organization account to manage attendance securely.</p>
     <form id="authForm" class="auth-form">
       <label for="authEmail">Email address</label>
       <input id="authEmail" type="email" autocomplete="email" required placeholder="you@company.com">
       <label for="authPassword">Password</label>
       <input id="authPassword" type="password" autocomplete="current-password" required minlength="6" placeholder="Enter your password">
+      <div id="authConfirmGroup" hidden>
+        <label for="authConfirmPassword">Confirm password</label>
+        <input id="authConfirmPassword" type="password" autocomplete="new-password" minlength="6" placeholder="Re-enter your password">
+      </div>
       <button class="btn btn-primary" type="submit" id="authSubmit">Sign in</button>
       <p class="auth-message" id="authMessage" role="status"></p>
     </form>
+    <p class="auth-switch" id="authSwitchText">New to AI Attendance? <button type="button" class="auth-link" id="authModeToggle">Create an account</button></p>
   </div>
 </div>
 

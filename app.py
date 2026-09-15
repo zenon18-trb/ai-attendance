@@ -603,8 +603,8 @@ async def get_attendance(
             "status": row.get("status", "Present"), "confidence": float(row["confidence"] or 0) * 100 if row.get("confidence") is not None else 0,
             "snapshot": create_signed_image_url(row.get("snapshot_path", "")), "method": "AI Facial Recognition",
         } for row in rows]
-    except SupabaseRepositoryError:
-        records = load_attendance_records()
+    except SupabaseRepositoryError as exc:
+        raise HTTPException(status_code=503, detail="Attendance service unavailable") from exc
     filtered = records
 
     if search:
@@ -945,16 +945,16 @@ async def get_persons(request: Request):
             "employeeId": p["employee_id"], "image": create_signed_image_url(p.get("image_path", "")),
             "registeredDate": p.get("created_at", "")[:10], "active": True,
         } for p in people_rows]
-    except SupabaseRepositoryError:
-        persons = load_persons()
-    records = load_attendance_records()
+    except SupabaseRepositoryError as exc:
+        raise HTTPException(status_code=503, detail="People service unavailable") from exc
+    records = supabase_list_attendance(request.state.organization_id, limit=500, offset=0)
     
-    # Enrich with attendance stats
+    # Enrich with attendance stats from the same organization.
     for p in persons:
         uname = p["name"].upper()
-        p_records = [r for r in records if r.get("name", "").upper() == uname]
+        p_records = [r for r in records if r.get("person_name", "").upper() == uname]
         p["totalAttendance"] = len(p_records)
-        p["lastSeen"] = p_records[0]["date"] + " " + p_records[0]["time"] if p_records else "Never"
+        p["lastSeen"] = p_records[0].get("captured_at", "") if p_records else "Never"
     
     return persons
 
@@ -964,10 +964,14 @@ async def create_person(req: PersonCreateRequest, request: Request):
     if not uname:
         raise HTTPException(status_code=400, detail="Person name is required")
     
-    persons = load_persons()
-    for p in persons:
+    try:
+        existing_people = supabase_list_people(request.state.organization_id)
+    except SupabaseRepositoryError as exc:
+        raise HTTPException(status_code=503, detail="People service unavailable") from exc
+    for p in existing_people:
         if p["name"].upper() == uname:
             raise HTTPException(status_code=400, detail=f"Person '{uname}' is already registered.")
+    persons = existing_people
 
     # Save image
     img_filename = f"{uname.lower().replace(' ', '_')}.jpg"
@@ -1027,12 +1031,12 @@ async def create_person(req: PersonCreateRequest, request: Request):
 @app.delete("/api/persons/{name}")
 async def delete_person(name: str, request: Request):
     uname = name.strip().upper()
-    persons = load_persons()
-    deleted_person = next((p for p in persons if p["name"].upper() == uname), None)
-    initial_len = len(persons)
-    persons = [p for p in persons if p["name"].upper() != uname]
-    
-    if len(persons) == initial_len:
+    try:
+        people_rows = supabase_list_people(request.state.organization_id)
+    except SupabaseRepositoryError as exc:
+        raise HTTPException(status_code=503, detail="People service unavailable") from exc
+    deleted_person = next((p for p in people_rows if p["name"].upper() == uname), None)
+    if not deleted_person:
         raise HTTPException(status_code=404, detail=f"Person '{uname}' not found")
     
     try:
@@ -1078,12 +1082,21 @@ async def get_snapshot_photo(filename: str):
 # ----------------- Analytics & Intelligence API ----------------- #
 
 @app.get("/api/analytics")
-async def get_analytics():
-    persons = load_persons()
-    records = load_attendance_records()
+async def get_analytics(request: Request):
+    try:
+        persons = supabase_list_people(request.state.organization_id)
+        attendance_rows = supabase_list_attendance(request.state.organization_id, limit=500, offset=0)
+    except SupabaseRepositoryError as exc:
+        raise HTTPException(status_code=503, detail="Analytics service unavailable") from exc
+    records = [{
+        "name": row["person_name"],
+        "date": row.get("captured_at", "")[:10],
+        "time": row.get("captured_at", "")[11:19],
+        "status": row.get("status", "Present"),
+    } for row in attendance_rows]
     total_persons = len(persons)
     
-    today_str = datetime.now().strftime("%d/%m/%Y")
+    today_str = datetime.now().date().isoformat()
     today_records = [r for r in records if r.get("date") == today_str]
     
     unique_present_names = {r["name"].upper() for r in today_records}
@@ -1111,7 +1124,7 @@ async def get_analytics():
     trend_7days = []
     for i in range(6, -1, -1):
         target_date = datetime.now() - timedelta(days=i)
-        d_str = target_date.strftime("%d/%m/%Y")
+        d_str = target_date.date().isoformat()
         label = target_date.strftime("%a %d")
         d_records = [r for r in records if r.get("date") == d_str]
         present_d = len({r["name"].upper() for r in d_records})
